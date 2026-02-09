@@ -72,9 +72,9 @@ export class HUD {
     }
   }
 
-  updateGrenades(count: number): void {
-    this.grenadeEl.textContent = `G [Gas]: ${count}`;
-    this.grenadeEl.style.visibility = count >= 0 ? 'visible' : 'hidden';
+  updateGrenades(gasCount: number, fragCount: number): void {
+    this.grenadeEl.textContent = `G [Gas]: ${gasCount}  ·  F [Frag]: ${fragCount}`;
+    this.grenadeEl.style.visibility = gasCount >= 0 || fragCount >= 0 ? 'visible' : 'hidden';
   }
 
   updateWeapon(weapon: WeaponBase): void {

@@ -53,6 +53,7 @@ export class Game {
   private enemyManager: EnemyManager;
   private pickupSystem: PickupSystem;
   private gasGrenadeCount = 3;
+  private fragGrenadeCount = 2;
   private readonly _throwOrigin = new THREE.Vector3();
   private readonly _throwDir = new THREE.Vector3();
   private hud: HUD;
@@ -305,12 +306,18 @@ export class Game {
       this.physicsAccumulator -= PHYSICS_STEP;
     }
 
-    // Gas grenade (G) — after physics so throw origin matches current camera/eye position
+    // Grenades — after physics so throw origin matches current camera/eye position
     if (this.input.wasKeyJustPressed('g') && this.gasGrenadeCount > 0) {
       this._throwOrigin.copy(this.fpsCamera.camera.position);
       this.fpsCamera.getLookDirection(this._throwDir);
-      this.grenadeSystem.throw(this._throwOrigin, this._throwDir);
+      this.grenadeSystem.throw(this._throwOrigin, this._throwDir, 'gas');
       this.gasGrenadeCount--;
+    }
+    if (this.input.wasKeyJustPressed('f') && this.fragGrenadeCount > 0) {
+      this._throwOrigin.copy(this.fpsCamera.camera.position);
+      this.fpsCamera.getLookDirection(this._throwDir);
+      this.grenadeSystem.throw(this._throwOrigin, this._throwDir, 'frag');
+      this.fragGrenadeCount--;
     }
 
     // Update enemy manager with player state
@@ -332,8 +339,8 @@ export class Game {
     // Projectile system: particles + decal cleanup
     this.projectileSystem.update(dt);
 
-    // Grenade system: thrown arcs + gas clouds
-    this.grenadeSystem.update(dt);
+    // Grenade system: thrown arcs + gas clouds + explosions
+    this.grenadeSystem.update(dt, this.fpsCamera.camera);
 
     // Scope overlay
     this.scopeOverlay.visible = this.weaponManager.scoped;
@@ -351,7 +358,7 @@ export class Game {
     // HUD
     this.hud.updateHealth(this.player.health);
     this.hud.updateArmor(this.player.armor);
-    this.hud.updateGrenades(this.gasGrenadeCount);
+    this.hud.updateGrenades(this.gasGrenadeCount, this.fragGrenadeCount);
     this.hud.updateWeapon(this.weaponManager.currentWeapon);
     this.hud.update(dt);
 
