@@ -1,0 +1,56 @@
+{
+  "name": "Facility Infiltration",
+  "briefing": "Infiltrate the facility, secure the red key card from the storage room, access the control room to download intel, then reach the extraction point. Expect resistance.",
+  "rooms": [
+    {"id":"entrance","x":0,"y":0,"z":0,"width":14,"depth":18,"height":4,"floorColor":4473941,"wallColor":5592422},
+    {"id":"corridor1","x":0,"y":0,"z":16,"width":8,"depth":14,"height":4,"floorColor":4210768,"wallColor":5259872},
+    {"id":"key_room","x":12,"y":0,"z":16,"width":16,"depth":12,"height":4,"floorColor":4535600,"wallColor":5591616},
+    {"id":"armory","x":12,"y":0,"z":28,"width":12,"depth":14,"height":4,"floorColor":3352388,"wallColor":4473941},
+    {"id":"control","x":0,"y":0,"z":28,"width":12,"depth":14,"height":4,"floorColor":3158304,"wallColor":4210768},
+    {"id":"exit_corridor","x":0,"y":0,"z":42,"width":8,"depth":14,"height":4,"floorColor":3487029,"wallColor":4541765},
+    {"id":"extraction","x":0,"y":0,"z":54,"width":10,"depth":12,"height":4,"floorColor":3361587,"wallColor":4483652}
+  ],
+  "doors": [
+    {"id":"d1","x":0,"y":0,"z":8.5,"width":2.5,"height":3,"axis":"z","type":"proximity","proximityRadius":2.5},
+    {"id":"d2","x":5.5,"y":0,"z":16,"width":2,"height":2.8,"axis":"x","type":"locked","keyId":"red","proximityRadius":2},
+    {"id":"d3","x":12,"y":0,"z":23,"width":2.5,"height":3,"axis":"z","type":"proximity","proximityRadius":2.5},
+    {"id":"d4","x":6,"y":0,"z":28,"width":2.5,"height":3,"axis":"x","type":"proximity","proximityRadius":2.5},
+    {"id":"d5","x":0,"y":0,"z":37,"width":2.5,"height":3,"axis":"z","type":"proximity","proximityRadius":2.5},
+    {"id":"d6","x":0,"y":0,"z":52,"width":2,"height":2.8,"axis":"z","type":"proximity","proximityRadius":2}
+  ],
+  "playerSpawn": {"x":0,"y":-2,"z":0},
+  "enemies": [
+    {"x":4,"y":-2,"z":4,"facingAngle":0.5},
+    {"x":-4,"y":-2,"z":-3,"facingAngle":3.14159},
+    {"x":0,"y":-2,"z":18,"facingAngle":0,"waypoints":[{"x":0,"z":18},{"x":0,"z":22},{"x":0,"z":18}]},
+    {"x":12,"y":-2,"z":20,"facingAngle":-0.5},
+    {"x":12,"y":-2,"z":32,"facingAngle":0,"waypoints":[{"x":12,"z":30},{"x":18,"z":30},{"x":18,"z":34},{"x":12,"z":34},{"x":12,"z":30}]},
+    {"x":0,"y":-2,"z":32,"facingAngle":0},
+    {"x":0,"y":-2,"z":46,"facingAngle":0}
+  ],
+  "pickups": [
+    {"type":"key","x":12,"y":-2,"z":20,"keyId":"red"},
+    {"type":"weapon-rifle","x":16,"y":-2,"z":30,"amount":1},
+    {"type":"ammo-rifle","x":14,"y":-2,"z":32,"amount":30},
+    {"type":"health","x":8,"y":-2,"z":28,"amount":25},
+    {"type":"armor","x":-3,"y":-2,"z":2,"amount":50},
+    {"type":"ammo-pistol","x":3,"y":-2,"z":-2,"amount":24}
+  ],
+  "objectives": [
+    {"id":"obj1","title":"Secure red key card from storage"},
+    {"id":"obj2","title":"Access control room and download intel"},
+    {"id":"obj3","title":"Reach extraction point"}
+  ],
+  "triggers": [
+    {"id":"t_key_room","x":12,"y":-0.5,"z":20,"halfWidth":2,"halfDepth":2,"halfHeight":1.5,"onEnter":"objective:complete:obj1","once":true},
+    {"id":"t_control","x":0,"y":-0.5,"z":32,"halfWidth":3,"halfDepth":3,"halfHeight":1.5,"onEnter":"objective:complete:obj2","once":true},
+    {"id":"t_extraction","x":0,"y":-0.5,"z":54,"halfWidth":3,"halfDepth":2,"halfHeight":1.5,"onEnter":"mission:complete","once":true}
+  ],
+  "props": [
+    {"type":"crate","x":5,"y":-2,"z":5,"scale":0.8},
+    {"type":"crate_metal","x":-5,"y":-2,"z":4},
+    {"type":"barrel","x":0,"y":-2,"z":20},
+    {"type":"crate","x":15,"y":-2,"z":30},
+    {"type":"crate","x":-2,"y":-2,"z":30}
+  ]
+}
