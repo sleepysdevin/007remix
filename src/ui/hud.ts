@@ -6,6 +6,7 @@ export class HUD {
   private crosshairEl: HTMLElement;
   private hudEl: HTMLElement;
   private armorEl: HTMLElement;
+  private grenadeEl: HTMLElement;
 
   private crosshairFlashTimer = 0;
 
@@ -28,6 +29,20 @@ export class HUD {
       pointer-events: none;
     `;
     this.hudEl.appendChild(this.armorEl);
+
+    this.grenadeEl = document.createElement('div');
+    this.grenadeEl.id = 'grenade-display';
+    this.grenadeEl.style.cssText = `
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      margin-bottom: 48px;
+      font-size: 16px;
+      font-family: 'Courier New', monospace;
+      color: #8f8;
+      pointer-events: none;
+    `;
+    this.hudEl.appendChild(this.grenadeEl);
   }
 
   show(): void {
@@ -55,6 +70,11 @@ export class HUD {
     } else {
       this.armorEl.innerHTML = '';
     }
+  }
+
+  updateGrenades(count: number): void {
+    this.grenadeEl.textContent = `G [Gas]: ${count}`;
+    this.grenadeEl.style.visibility = count >= 0 ? 'visible' : 'hidden';
   }
 
   updateWeapon(weapon: WeaponBase): void {

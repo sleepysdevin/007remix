@@ -36,6 +36,10 @@ export class WeaponViewModel {
   private _scoped = false;
   private scopeTransition = 0;
 
+  // Reload animation (tilts weapon down then back)
+  private reloadAnimTime = 0;
+  private reloadAnimDuration = 0;
+
   constructor() {
     this.group = new THREE.Group();
     this.group.renderOrder = 999;
@@ -125,6 +129,12 @@ export class WeaponViewModel {
     this.flashTimer = 0.05;
   }
 
+  /** Start the reload animation (weapon tilts down then back over duration seconds). */
+  startReloadAnimation(duration: number): void {
+    this.reloadAnimDuration = duration;
+    this.reloadAnimTime = 0;
+  }
+
   update(dt: number, isMoving: boolean, isSprinting = false): void {
     // Scope transition
     const targetScope = this._scoped ? 1 : 0;
@@ -155,11 +165,68 @@ export class WeaponViewModel {
     const hipY = this.restPosition.y + bobY + recoilY + this.swayY;
     const hipZ = this.restPosition.z + recoilZ;
 
-    const finalX = THREE.MathUtils.lerp(hipX, scopedPos.x, this.scopeTransition);
-    const finalY = THREE.MathUtils.lerp(hipY, scopedPos.y + recoilY, this.scopeTransition);
-    const finalZ = THREE.MathUtils.lerp(hipZ, scopedPos.z + recoilZ, this.scopeTransition);
+    let finalX = THREE.MathUtils.lerp(hipX, scopedPos.x, this.scopeTransition);
+    let finalY = THREE.MathUtils.lerp(hipY, scopedPos.y + recoilY, this.scopeTransition);
+    let finalZ = THREE.MathUtils.lerp(hipZ, scopedPos.z + recoilZ, this.scopeTransition);
 
+    // Reload animation: weapon tilt + magazine out/in or shells one-by-one
+    let reloadTilt = 0;
+    const isShotgun = this.currentType === 'shotgun';
+    const isMagFed = this.currentType === 'pistol' || this.currentType === 'rifle' || this.currentType === 'sniper';
+    if (this.reloadAnimTime < this.reloadAnimDuration) {
+      this.reloadAnimTime += dt;
+      const t = Math.min(1, this.reloadAnimTime / this.reloadAnimDuration);
+      if (t < 0.2) {
+        reloadTilt = t / 0.2;
+      } else if (t < 0.7) {
+        reloadTilt = 1;
+      } else {
+        reloadTilt = (1 - t) / 0.3;
+      }
+      finalY += reloadTilt * -0.06;
+      finalZ += reloadTilt * 0.03;
+
+      if (isMagFed) {
+        const mag = this.weaponMesh.getObjectByName('reloadMag') as (THREE.Mesh & { userData: { restY: number } }) | undefined;
+        if (mag?.userData?.restY != null) {
+          const restY = mag.userData.restY as number;
+          let magOut = 0;
+          if (t < 0.25) {
+            magOut = t / 0.25;
+          } else if (t < 0.48) {
+            magOut = 1;
+          } else if (t < 0.72) {
+            magOut = 1 - (t - 0.48) / 0.24;
+          }
+          mag.position.y = restY + magOut * -0.12;
+        }
+      }
+
+      if (isShotgun) {
+        const loadX = -0.055, loadY = -0.045, loadZ = -0.08;
+        for (let i = 1; i <= 5; i++) {
+          const shell = this.weaponMesh.getObjectByName(`reloadShell${i}`) as (THREE.Mesh & { userData: { restZ: number } }) | undefined;
+          if (shell?.userData?.restZ == null) continue;
+          const restZ = (shell as THREE.Mesh & { userData: { restZ: number } }).userData.restZ;
+          const t0 = 0.05 + (i - 1) * 0.18;
+          const t1 = t0 + 0.18;
+          let u = 0;
+          if (t >= t1) u = 1;
+          else if (t > t0) u = (t - t0) / (t1 - t0);
+          shell.position.x = THREE.MathUtils.lerp(loadX, 0, u);
+          shell.position.y = THREE.MathUtils.lerp(loadY, -0.01, u);
+          shell.position.z = THREE.MathUtils.lerp(loadZ, restZ, u);
+        }
+      }
+    } else if (isMagFed) {
+      const mag = this.weaponMesh.getObjectByName('reloadMag') as (THREE.Mesh & { userData: { restY: number } }) | undefined;
+      if (mag?.userData?.restY != null) {
+        mag.position.y = mag.userData.restY as number;
+      }
+    }
     this.weaponMesh.position.set(finalX, finalY, finalZ);
+    this.weaponMesh.rotation.x = reloadTilt * 0.4;
+    this.weaponMesh.rotation.z = reloadTilt * 0.12;
 
     // Hide weapon when fully scoped
     this.weaponMesh.visible = this.scopeTransition < 0.9;
@@ -226,6 +293,11 @@ export class WeaponViewModel {
     slide.position.set(0, 0.01, 0); gun.add(slide);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.09, 0.04), gripMat);
     grip.position.set(0, -0.05, 0.04); grip.rotation.x = 0.15; gun.add(grip);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.06, 0.03), bodyMat);
+    mag.position.set(0, -0.06, 0.05);
+    mag.name = 'reloadMag';
+    (mag.userData as Record<string, number>).restY = -0.06;
+    gun.add(mag);
     return gun;
   }
 
@@ -248,7 +320,10 @@ export class WeaponViewModel {
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 8), bodyMat);
     barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.03, -0.3); gun.add(barrel);
     const mag = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.08, 0.04), bodyMat);
-    mag.position.set(0, -0.04, -0.02); gun.add(mag);
+    mag.position.set(0, -0.04, -0.02);
+    mag.name = 'reloadMag';
+    (mag.userData as Record<string, number>).restY = -0.04;
+    gun.add(mag);
     const stock = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.15), woodMat);
     stock.position.set(0, -0.01, 0.15); gun.add(stock);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.07, 0.035), woodMat);
@@ -280,6 +355,21 @@ export class WeaponViewModel {
     stock.position.set(0, -0.005, 0.2); gun.add(stock);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.07, 0.035), woodMat);
     grip.position.set(0, -0.04, 0.08); grip.rotation.x = 0.15; gun.add(grip);
+    const shellMat = new THREE.MeshStandardMaterial({
+      map: getTextureForSkin(skin, 'metal'),
+      color: 0xcc8833,
+      roughness: 0.6,
+      metalness: 0.3,
+    });
+    const shellTubeZ = [-0.22, -0.18, -0.14, -0.10, -0.06];
+    for (let i = 0; i < 5; i++) {
+      const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.04, 8), shellMat);
+      shell.rotation.x = Math.PI / 2;
+      shell.position.set(0, -0.01, shellTubeZ[i]);
+      shell.name = `reloadShell${i + 1}`;
+      (shell.userData as Record<string, number>).restZ = shellTubeZ[i];
+      gun.add(shell);
+    }
     return gun;
   }
 
@@ -313,6 +403,11 @@ export class WeaponViewModel {
     stock.position.set(0, 0, 0.2); gun.add(stock);
     const bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.03, 6), bodyMat);
     bolt.position.set(0.025, 0.03, 0.02); gun.add(bolt);
+    const mag = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.07, 0.035), bodyMat);
+    mag.position.set(0, -0.035, -0.02);
+    mag.name = 'reloadMag';
+    (mag.userData as Record<string, number>).restY = -0.035;
+    gun.add(mag);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.07, 0.035), woodMat);
     grip.position.set(0, -0.04, 0.06); grip.rotation.x = 0.15; gun.add(grip);
     return gun;

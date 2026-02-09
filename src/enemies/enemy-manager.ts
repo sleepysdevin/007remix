@@ -208,6 +208,23 @@ export class EnemyManager {
     return null;
   }
 
+  /** Damage all living enemies within radius of center (e.g. gas cloud). */
+  damageEnemiesInRadius(center: THREE.Vector3, radius: number, damage: number): void {
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      const dist = enemy.group.position.distanceTo(center);
+      if (dist <= radius) {
+        enemy.takeDamage(damage);
+        if (enemy.dead) {
+          this.removeEnemyPhysics(enemy);
+          this.events.emit('enemy:killed', {
+            position: enemy.group.position.clone(),
+          });
+        }
+      }
+    }
+  }
+
   /** Remove an enemy's physics body and collider so the player can walk through corpses. Call when enemy dies. */
   removeEnemyPhysics(enemy: EnemyBase): void {
     try {

@@ -176,6 +176,7 @@ export class WeaponManager {
       if (weapon.startReload(now)) {
         playReload();
         this.reloadSoundPlayed = true;
+        this.viewModel.startReloadAnimation(weapon.stats.reloadTime);
       }
     }
     const reloadFinished = weapon.updateReload(now);
@@ -196,6 +197,7 @@ export class WeaponManager {
       } else if (weapon.currentAmmo <= 0 && !weapon.reloading) {
         if (weapon.startReload(now)) {
           playReload();
+          this.viewModel.startReloadAnimation(weapon.stats.reloadTime);
         } else {
           playDryFire();
         }

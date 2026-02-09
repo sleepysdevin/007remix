@@ -8,6 +8,7 @@ import { FPSCamera } from './player/fps-camera';
 import { PlayerController } from './player/player-controller';
 import { WeaponManager } from './weapons/weapon-manager';
 import { ProjectileSystem } from './weapons/projectile-system';
+import { GrenadeSystem } from './weapons/grenade-system';
 import { EnemyManager } from './enemies/enemy-manager';
 import { PickupSystem } from './levels/pickup-system';
 import { DoorSystem } from './levels/door-system';
@@ -48,8 +49,12 @@ export class Game {
   private player: PlayerController;
   private weaponManager: WeaponManager;
   private projectileSystem: ProjectileSystem;
+  private grenadeSystem: GrenadeSystem;
   private enemyManager: EnemyManager;
   private pickupSystem: PickupSystem;
+  private gasGrenadeCount = 3;
+  private readonly _throwOrigin = new THREE.Vector3();
+  private readonly _throwDir = new THREE.Vector3();
   private hud: HUD;
   private damageIndicator: DamageIndicator;
   private scopeOverlay: ScopeOverlay;
@@ -118,6 +123,10 @@ export class Game {
       this.events,
       this.player.getCollider(),
     );
+
+    // Grenade system (gas grenades)
+    this.grenadeSystem = new GrenadeSystem(this.scene, this.physics);
+    this.grenadeSystem.setEnemyManager(this.enemyManager);
 
     // Pickup system
     this.pickupSystem = new PickupSystem(this.scene);
@@ -295,6 +304,14 @@ export class Game {
       this.physicsAccumulator -= PHYSICS_STEP;
     }
 
+    // Gas grenade (G) — after physics so throw origin matches current camera/eye position
+    if (this.input.wasKeyJustPressed('g') && this.gasGrenadeCount > 0) {
+      this._throwOrigin.copy(this.fpsCamera.camera.position);
+      this.fpsCamera.getLookDirection(this._throwDir);
+      this.grenadeSystem.throw(this._throwOrigin, this._throwDir);
+      this.gasGrenadeCount--;
+    }
+
     // Update enemy manager with player state
     const playerPos = this.player.getPosition();
     const isMoving =
@@ -314,6 +331,9 @@ export class Game {
     // Projectile system: particles + decal cleanup
     this.projectileSystem.update(dt);
 
+    // Grenade system: thrown arcs + gas clouds
+    this.grenadeSystem.update(dt);
+
     // Scope overlay
     this.scopeOverlay.visible = this.weaponManager.scoped;
 
@@ -330,6 +350,7 @@ export class Game {
     // HUD
     this.hud.updateHealth(this.player.health);
     this.hud.updateArmor(this.player.armor);
+    this.hud.updateGrenades(this.gasGrenadeCount);
     this.hud.updateWeapon(this.weaponManager.currentWeapon);
     this.hud.update(dt);
 
