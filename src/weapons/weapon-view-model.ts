@@ -293,13 +293,29 @@ export class WeaponViewModel {
       roughness: 0.8,
       metalness: 0.2,
     });
-    // Body scaled up ~15% for chunkier GoldenEye feel (0.04→0.046, 0.22→0.25)
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: 0x181818,
+      roughness: 0.5,
+      metalness: 0.6,
+    });
+    // Body scaled up ~15% for chunkier GoldenEye feel
     const body = new THREE.Mesh(new THREE.BoxGeometry(0.046, 0.046, 0.25), bodyMat);
     body.position.set(0, 0.04, -0.03); gun.add(body);
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.09, 8), bodyMat);
     barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.04, -0.2); gun.add(barrel);
+    // Barrel bushing ring at muzzle
+    const barrelRing = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.017, 0.01, 8), bodyMat);
+    barrelRing.rotation.x = Math.PI / 2; barrelRing.position.set(0, 0.04, -0.245); gun.add(barrelRing);
     const slide = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.034, 0.18), bodyMat);
     slide.position.set(0, 0.01, 0); gun.add(slide);
+    // Slide serrations — rear of slide (4 raised ridges)
+    for (let i = 0; i < 4; i++) {
+      const serr = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.003, 0.005), accentMat);
+      serr.position.set(0, 0.028, -0.09 - i * 0.012); gun.add(serr);
+    }
+    // Ejection port — dark recessed rectangle on right side
+    const ejectionPort = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.015, 0.03), accentMat);
+    ejectionPort.position.set(0.024, 0.04, -0.04); gun.add(ejectionPort);
     // Trigger guard — 3 thin boxes forming a loop under the body
     const triggerGuardBack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.04, 0.02), bodyMat);
     triggerGuardBack.position.set(0, -0.02, 0.06); gun.add(triggerGuardBack);
@@ -307,6 +323,9 @@ export class WeaponViewModel {
     triggerGuardLeft.position.set(-0.018, -0.035, 0.04); gun.add(triggerGuardLeft);
     const triggerGuardRight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.008, 0.06), bodyMat);
     triggerGuardRight.position.set(0.018, -0.035, 0.04); gun.add(triggerGuardRight);
+    // Trigger
+    const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.018, 0.006), accentMat);
+    trigger.position.set(0, -0.015, 0.02); gun.add(trigger);
     // Front sight post
     const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.015, 0.015), bodyMat);
     frontSight.position.set(0, 0.05, -0.2); gun.add(frontSight);
@@ -318,8 +337,18 @@ export class WeaponViewModel {
     // Hammer
     const hammer = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.015, 0.02), bodyMat);
     hammer.position.set(0, 0.025, -0.11); gun.add(hammer);
+    // Slide stop lever (small rectangle on left side)
+    const slideStop = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.008, 0.02), accentMat);
+    slideStop.position.set(-0.025, 0.02, -0.02); gun.add(slideStop);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.1, 0.045), gripMat);
     grip.position.set(0, -0.05, 0.04); grip.rotation.x = 0.15; gun.add(grip);
+    // Grip screws (tiny dots on each side)
+    const screwMat = new THREE.MeshStandardMaterial({ color: 0x666666, roughness: 0.3, metalness: 0.9 });
+    const screwGeo = new THREE.CylinderGeometry(0.003, 0.003, 0.004, 6);
+    const screwL = new THREE.Mesh(screwGeo, screwMat);
+    screwL.rotation.z = Math.PI / 2; screwL.position.set(-0.022, -0.05, 0.04); gun.add(screwL);
+    const screwR = new THREE.Mesh(screwGeo, screwMat);
+    screwR.rotation.z = Math.PI / 2; screwR.position.set(0.022, -0.05, 0.04); gun.add(screwR);
     const mag = new THREE.Mesh(new THREE.BoxGeometry(0.028, 0.065, 0.032), bodyMat);
     mag.position.set(0, -0.065, 0.05);
     mag.name = 'reloadMag';
@@ -342,17 +371,37 @@ export class WeaponViewModel {
       roughness: 0.7,
       metalness: 0.1,
     });
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: 0x181818,
+      roughness: 0.5,
+      metalness: 0.6,
+    });
     // Receiver scaled up for bolder look
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.32), bodyMat);
     receiver.position.set(0, 0.02, -0.05); gun.add(receiver);
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.013, 0.2, 8), bodyMat);
     barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.03, -0.32); gun.add(barrel);
-    // Handguard — box around barrel area
+    // Muzzle ring
+    const muzzleRing = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.008, 8), bodyMat);
+    muzzleRing.rotation.x = Math.PI / 2; muzzleRing.position.set(0, 0.03, -0.42); gun.add(muzzleRing);
+    // Handguard — box around barrel area with ventilation slots
     const handguard = new THREE.Mesh(new THREE.BoxGeometry(0.035, 0.035, 0.15), bodyMat);
     handguard.position.set(0, 0.03, -0.25); gun.add(handguard);
-    // Front sight post
+    // Ventilation slots on handguard (3 dark grooves)
+    for (let i = 0; i < 3; i++) {
+      const slot = new THREE.Mesh(new THREE.BoxGeometry(0.037, 0.004, 0.018), accentMat);
+      slot.position.set(0, 0.048, -0.21 - i * 0.035); gun.add(slot);
+    }
+    // Ejection port on right side
+    const ejectionPort = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.02, 0.035), accentMat);
+    ejectionPort.position.set(0.027, 0.025, -0.08); gun.add(ejectionPort);
+    // Front sight post with protective ears
     const frontSight = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.012, 0.02), bodyMat);
     frontSight.position.set(0, 0.045, -0.4); gun.add(frontSight);
+    const frontSightEarL = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.008, 0.012), bodyMat);
+    frontSightEarL.position.set(-0.008, 0.042, -0.4); gun.add(frontSightEarL);
+    const frontSightEarR = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.008, 0.012), bodyMat);
+    frontSightEarR.position.set(0.008, 0.042, -0.4); gun.add(frontSightEarR);
     // Rear sight notch
     const rearSight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.015, 0.015), bodyMat);
     rearSight.position.set(0, 0.045, -0.2); gun.add(rearSight);
@@ -362,6 +411,16 @@ export class WeaponViewModel {
     // Trigger guard
     const triggerGuard = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.035, 0.06), bodyMat);
     triggerGuard.position.set(0, -0.045, 0.02); gun.add(triggerGuard);
+    // Trigger
+    const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.016, 0.006), accentMat);
+    trigger.position.set(0, -0.032, 0.01); gun.add(trigger);
+    // Receiver pins (2 small circles on left side)
+    const pinGeo = new THREE.CylinderGeometry(0.003, 0.003, 0.004, 6);
+    const pinMat = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.3, metalness: 0.9 });
+    const pin1 = new THREE.Mesh(pinGeo, pinMat);
+    pin1.rotation.z = Math.PI / 2; pin1.position.set(-0.027, 0.02, -0.03); gun.add(pin1);
+    const pin2 = new THREE.Mesh(pinGeo, pinMat);
+    pin2.rotation.z = Math.PI / 2; pin2.position.set(-0.027, 0.02, 0.06); gun.add(pin2);
     // Stock butt plate
     const buttPlate = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.05, 0.02), bodyMat);
     buttPlate.position.set(0, -0.01, 0.26); gun.add(buttPlate);
@@ -391,24 +450,56 @@ export class WeaponViewModel {
       roughness: 0.6,
       metalness: 0.1,
     });
-    // Barrel chunkier: r 0.02 → 0.024
+    const accentMat = new THREE.MeshStandardMaterial({
+      color: 0x181818,
+      roughness: 0.5,
+      metalness: 0.6,
+    });
+    // Barrel chunkier: r 0.024
     const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.024, 0.4, 8), bodyMat);
     barrel.rotation.x = Math.PI / 2; barrel.position.set(0, 0.03, -0.2); gun.add(barrel);
+    // Muzzle ring — thicker ring at barrel tip
+    const muzzleRing = new THREE.Mesh(new THREE.CylinderGeometry(0.027, 0.027, 0.01, 8), bodyMat);
+    muzzleRing.rotation.x = Math.PI / 2; muzzleRing.position.set(0, 0.03, -0.4); gun.add(muzzleRing);
     // Magazine tube — visible tube under barrel (GoldenEye style)
     const magTube = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.32, 8), bodyMat);
     magTube.rotation.x = Math.PI / 2; magTube.position.set(0, -0.02, -0.15); gun.add(magTube);
+    // Tube cap
+    const tubeCap = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.012, 8), bodyMat);
+    tubeCap.rotation.x = Math.PI / 2; tubeCap.position.set(0, -0.02, -0.31); gun.add(tubeCap);
+    // Barrel clamp connecting barrel to mag tube
+    const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.06, 0.012), bodyMat);
+    clamp.position.set(0, 0.005, -0.28); gun.add(clamp);
     // Front bead sight
     const beadSight = new THREE.Mesh(new THREE.SphereGeometry(0.006, 6, 6), bodyMat);
     beadSight.position.set(0, 0.04, -0.38); gun.add(beadSight);
     // Trigger guard
     const triggerGuard = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.04, 0.07), bodyMat);
     triggerGuard.position.set(0, -0.045, 0.08); gun.add(triggerGuard);
+    // Trigger
+    const trigger = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.016, 0.006), accentMat);
+    trigger.position.set(0, -0.03, 0.065); gun.add(trigger);
+    // Pump with grip grooves
     const pump = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.04, 0.1), woodMat);
     pump.position.set(0, 0.0, -0.15); gun.add(pump);
+    // Pump grooves (ridges for grip)
+    for (let i = 0; i < 5; i++) {
+      const groove = new THREE.Mesh(new THREE.BoxGeometry(0.047, 0.002, 0.008), accentMat);
+      groove.position.set(0, 0.021, -0.17 + i * 0.02); gun.add(groove);
+    }
+    // Ejection port on right side of receiver
+    const ejectionPort = new THREE.Mesh(new THREE.BoxGeometry(0.004, 0.025, 0.04), accentMat);
+    ejectionPort.position.set(0.03, 0.015, 0.04); gun.add(ejectionPort);
     const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.065, 0.15), bodyMat);
     receiver.position.set(0, 0.01, 0.05); gun.add(receiver);
+    // Safety button (small dot on top of receiver)
+    const safety = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.006, 6), accentMat);
+    safety.position.set(0, 0.045, 0.09); gun.add(safety);
     const stock = new THREE.Mesh(new THREE.BoxGeometry(0.042, 0.058, 0.18), woodMat);
     stock.position.set(0, -0.005, 0.2); gun.add(stock);
+    // Rubber butt pad
+    const buttPad = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.06, 0.008), accentMat);
+    buttPad.position.set(0, -0.005, 0.292); gun.add(buttPad);
     const grip = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.075, 0.038), woodMat);
     grip.position.set(0, -0.045, 0.08); grip.rotation.x = 0.15; gun.add(grip);
     const shellMat = new THREE.MeshStandardMaterial({

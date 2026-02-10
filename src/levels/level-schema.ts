@@ -59,6 +59,8 @@ export interface DoorDef {
   keyId?: string;
   /** Proximity radius for auto-open (proximity doors) */
   proximityRadius?: number;
+  /** List of objective IDs that must be complete before this door opens */
+  requireObjectives?: string[];
 }
 
 export interface SpawnDef {
@@ -111,6 +113,11 @@ export interface TriggerDef {
   once?: boolean;
 }
 
+export interface PropLoot {
+  type: string;
+  amount?: number;
+}
+
 export interface PropDef {
   type: 'crate' | 'barrel' | 'crate_metal';
   x: number;
@@ -118,4 +125,6 @@ export interface PropDef {
   z: number;
   /** Optional scale */
   scale?: number;
+  /** Loot dropped when destroyed */
+  loot?: PropLoot;
 }

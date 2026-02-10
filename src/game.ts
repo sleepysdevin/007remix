@@ -27,6 +27,7 @@ import { BriefingScreen } from './ui/briefing-screen';
 import { ObjectivesDisplay } from './ui/objectives-display';
 import { InventoryScreen } from './ui/inventory-screen';
 import { PauseMenu } from './ui/pause-menu';
+import { MissionCompleteScreen } from './ui/mission-complete-screen';
 import { renderWeaponPreviewToCanvas } from './weapons/weapon-preview-renderer';
 import {
   concreteWallTexture,
@@ -78,12 +79,15 @@ export class Game {
   private flashlight: THREE.SpotLight;
   private flashlightOn = false;
   private pauseMenu: PauseMenu;
+  private missionCompleteScreen: MissionCompleteScreen;
   private paused = false;
 
   private physicsAccumulator = 0;
   private started = false;
   private levelMode: boolean;
   private missionComplete = false;
+  private missionElapsed = 0;
+  private levelName = '';
 
   // Reusable vector to avoid per-frame heap allocations
   private readonly _playerVec = new THREE.Vector3();
@@ -187,12 +191,19 @@ export class Game {
     this.projectileSystem.isEnemyCollider = (c) => this.enemyManager.getEnemyByCollider(c) !== null;
 
     // When player shoots: check if it hit an enemy OR a destructible prop
+    const HEADSHOT_MULTIPLIER = 2;
+    const HEADSHOT_Y_THRESHOLD = 1.2; // above enemy group.y — head zone is ~1.2–1.7
     this.projectileSystem.onHitCollider = (collider, _point, _normal) => {
       // Check enemies first
       const enemy = this.enemyManager.getEnemyByCollider(collider);
       if (enemy && !enemy.dead) {
         const weapon = this.weaponManager.currentWeapon;
-        enemy.takeDamage(weapon.stats.damage);
+        let dmg = weapon.stats.damage;
+        const hitY = _point.y - enemy.group.position.y;
+        if (hitY >= HEADSHOT_Y_THRESHOLD) {
+          dmg *= HEADSHOT_MULTIPLIER;
+        }
+        enemy.takeDamage(dmg);
         this.hud.flashCrosshair(); // Red flash = hit confirmed
 
         if (enemy.dead) {
@@ -242,6 +253,11 @@ export class Game {
       playDestruction(type);
     };
 
+    // Loot drops from destroyed props
+    this.destructibleSystem.onLootDrop = (lootType, amount, position) => {
+      this.pickupSystem.spawn(lootType as any, position.x, position.y, position.z, amount);
+    };
+
     // HUD
     this.hud = new HUD();
 
@@ -257,12 +273,19 @@ export class Game {
       this.exitToMenu();
     };
 
+    // Mission complete screen
+    this.missionCompleteScreen = new MissionCompleteScreen();
+    this.missionCompleteScreen.onExit = () => {
+      this.exitToMenu();
+    };
+
     if (this.levelMode) {
       this.doorSystem = new DoorSystem(
         this.scene,
         this.physics,
         () => this.player.getPosition(),
         (id) => this.player.hasKey(id),
+        (id) => this.objectiveSystem?.isCompleted(id) ?? false,
       );
       this.triggerSystem = new TriggerSystem(() => this.player.getPosition());
       this.triggerSystem.onTrigger = (event) => this.handleTrigger(event);
@@ -298,6 +321,8 @@ export class Game {
   /** Build level from schema (level mode). Call after showBriefing → user clicks Start. */
   loadLevel(level: LevelSchema): void {
     if (!this.doorSystem || !this.triggerSystem || !this.objectiveSystem) return;
+    this.levelName = level.name;
+    this.missionElapsed = 0;
     buildLevel(level, {
       scene: this.scene,
       physics: this.physics,
@@ -351,8 +376,15 @@ export class Game {
     } else if (parts[0] === 'door' && parts[1] === 'unlock' && this.doorSystem) {
       this.doorSystem.unlockDoor(parts[2]);
     } else if (event === 'mission:complete') {
-      this.missionComplete = true;
-      this.onMissionComplete?.();
+      if (!this.missionComplete) {
+        // Complete the extraction objective before showing the screen
+        this.objectiveSystem?.complete('obj3');
+        this.missionComplete = true;
+        document.exitPointerLock();
+        stopMusic();
+        this.missionCompleteScreen.show(this.levelName, this.missionElapsed);
+        this.onMissionComplete?.();
+      }
     }
   }
 
@@ -366,12 +398,15 @@ export class Game {
       }
     }
 
-    // While paused, only render (frozen frame) — skip all updates
-    if (this.paused) {
+    // While paused or mission complete, only render (frozen frame)
+    if (this.paused || this.missionComplete) {
       this.input.resetMouse();
       this.renderer.render(this.scene, this.fpsCamera.camera);
       return;
     }
+
+    // Track mission time
+    if (this.levelMode) this.missionElapsed += dt;
 
     // Inventory toggle (Tab)
     if (this.input.wasKeyJustPressed('Tab')) {

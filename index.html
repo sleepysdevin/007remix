@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link href="https://fonts.googleapis.com/css2?family=Creepster&display=swap" rel="stylesheet">
   <title>007 Remix</title>
   <style>
     * {
@@ -68,6 +69,14 @@
       font-family: 'Courier New', monospace;
       cursor: pointer;
       z-index: 10;
+    }
+    #start-screen .drip-text {
+      font-family: 'Creepster', cursive;
+      font-size: 38px;
+      color: #cc0000;
+      text-shadow: 0 0 8px rgba(200, 0, 0, 0.6), 0 2px 4px rgba(0, 0, 0, 0.8);
+      letter-spacing: 4px;
+      margin-bottom: 2px;
     }
     #start-screen h1 {
       font-size: 64px;
@@ -138,6 +147,7 @@
   </div>
 
   <div id="start-screen">
+    <p class="drip-text">(NOT A)</p>
     <h1>007</h1>
     <p class="subtitle">REMIX</p>
     <div class="menu">

@@ -30,17 +30,20 @@ export class DoorSystem {
   private physics: PhysicsWorld;
   private getPlayerPos: () => { x: number; y: number; z: number };
   private hasKey: (keyId: string) => boolean;
+  private isObjectiveComplete: (id: string) => boolean;
 
   constructor(
     scene: THREE.Scene,
     physics: PhysicsWorld,
     getPlayerPos: () => { x: number; y: number; z: number },
     hasKey: (keyId: string) => boolean,
+    isObjectiveComplete: (id: string) => boolean = () => false,
   ) {
     this.scene = scene;
     this.physics = physics;
     this.getPlayerPos = getPlayerPos;
     this.hasKey = hasKey;
+    this.isObjectiveComplete = isObjectiveComplete;
   }
 
   /** Add a door from level definition. Call after physics world is ready. */
@@ -171,10 +174,22 @@ export class DoorSystem {
 
       if (!state.open) {
         const inRange = dist <= radius;
-        const canOpen =
-          def.type === 'proximity'
-            ? inRange
-            : def.type === 'locked' && state.unlocked && inRange && (def.keyId ? this.hasKey(def.keyId) : true);
+
+        // Objective-gated doors stay locked until required objectives are complete
+        if (def.requireObjectives?.length) {
+          const allDone = def.requireObjectives.every((id) => this.isObjectiveComplete(id));
+          if (!allDone) continue;
+        }
+
+        let canOpen = false;
+        if (def.requireObjectives?.length) {
+          // Objectives met — opens on proximity (no key needed)
+          canOpen = inRange;
+        } else if (def.type === 'proximity') {
+          canOpen = inRange;
+        } else if (def.type === 'locked') {
+          canOpen = state.unlocked && inRange && (def.keyId ? this.hasKey(def.keyId) : true);
+        }
 
         if (canOpen) {
           state.open = true;

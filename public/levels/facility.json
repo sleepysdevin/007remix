@@ -16,7 +16,7 @@
     {"id":"d3","x":12,"y":0,"z":23,"width":2.5,"height":3,"axis":"z","type":"proximity","proximityRadius":2.5},
     {"id":"d4","x":6,"y":0,"z":28,"width":2.5,"height":3,"axis":"x","type":"proximity","proximityRadius":2.5},
     {"id":"d5","x":0,"y":0,"z":37,"width":2.5,"height":3,"axis":"z","type":"proximity","proximityRadius":2.5},
-    {"id":"d6","x":0,"y":0,"z":52,"width":2,"height":2.8,"axis":"z","type":"proximity","proximityRadius":2}
+    {"id":"d6","x":0,"y":0,"z":48,"width":2,"height":2.8,"axis":"z","type":"locked","proximityRadius":2.5,"requireObjectives":["obj1","obj2"]}
   ],
   "playerSpawn": {"x":0,"y":-2,"z":0},
   "enemies": [
@@ -47,10 +47,14 @@
     {"id":"t_extraction","x":0,"y":-0.5,"z":54,"halfWidth":3,"halfDepth":2,"halfHeight":1.5,"onEnter":"mission:complete","once":true}
   ],
   "props": [
-    {"type":"crate","x":5,"y":-2,"z":5,"scale":0.8},
-    {"type":"crate_metal","x":-5,"y":-2,"z":4},
+    {"type":"crate","x":5,"y":-2,"z":5,"scale":0.8,"loot":{"type":"ammo-pistol","amount":14}},
+    {"type":"crate_metal","x":-5,"y":-2,"z":4,"loot":{"type":"armor","amount":25}},
     {"type":"barrel","x":0,"y":-2,"z":20},
-    {"type":"crate","x":15,"y":-2,"z":30},
-    {"type":"crate","x":-2,"y":-2,"z":30}
+    {"type":"crate","x":15,"y":-2,"z":30,"loot":{"type":"weapon-shotgun","amount":1}},
+    {"type":"crate","x":-2,"y":-2,"z":30,"loot":{"type":"health","amount":30}},
+    {"type":"crate_metal","x":10,"y":-2,"z":32,"loot":{"type":"ammo-rifle","amount":30}},
+    {"type":"crate","x":0,"y":-2,"z":44,"scale":0.8,"loot":{"type":"health","amount":25}},
+    {"type":"barrel","x":3,"y":-2,"z":44},
+    {"type":"crate_metal","x":-3,"y":-2,"z":52,"loot":{"type":"ammo-pistol","amount":14}}
   ]
 }

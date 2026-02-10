@@ -144,9 +144,12 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
     }
   }
 
-  // Triggers
+  // Triggers — also place extraction marker at mission:complete trigger
   for (const t of level.triggers) {
     triggerSystem.addTrigger(t);
+    if (t.onEnter === 'mission:complete') {
+      buildExtractionMarker(scene, t.x, t.y, t.z);
+    }
   }
 
   // Objectives
@@ -306,7 +309,7 @@ function buildProp(
     mesh.receiveShadow = true;
     scene.add(mesh);
     const collider = physics.createStaticCuboid(size / 2, size / 2, size / 2, x, y + size / 2, z);
-    destructible.register(mesh, collider, prop.type, undefined, size);
+    destructible.register(mesh, collider, prop.type, undefined, size, prop.loot);
   } else if (prop.type === 'barrel') {
     const mat = new THREE.MeshStandardMaterial({
       map: barrelTexture(),
@@ -321,6 +324,65 @@ function buildProp(
     mesh.castShadow = true;
     scene.add(mesh);
     const collider = physics.createStaticCuboid(0.4 * scale, 0.6 * scale, 0.4 * scale, x, y + 0.6 * scale, z);
-    destructible.register(mesh, collider, 'barrel', undefined, 0.8 * scale);
+    destructible.register(mesh, collider, 'barrel', undefined, 0.8 * scale, prop.loot);
   }
+}
+
+/**
+ * Build a floating, glowing downward arrow at the extraction point.
+ * Animated: bobs up and down and rotates slowly.
+ */
+function buildExtractionMarker(scene: THREE.Scene, x: number, y: number, z: number): void {
+  const group = new THREE.Group();
+  group.position.set(x, y + 1.8, z);
+
+  // Arrow built from two boxes: vertical shaft + arrowhead (chevron from two angled boxes)
+  const glowMat = new THREE.MeshBasicMaterial({
+    color: 0x44ff66,
+    transparent: true,
+    opacity: 0.85,
+  });
+
+  // Shaft
+  const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.6, 0.12), glowMat);
+  shaft.position.y = 0.3;
+  group.add(shaft);
+
+  // Arrowhead — two angled boxes forming a V pointing down
+  const headMat = new THREE.MeshBasicMaterial({
+    color: 0x66ffaa,
+    transparent: true,
+    opacity: 0.9,
+  });
+
+  const leftWing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.12), headMat);
+  leftWing.position.set(-0.15, -0.05, 0);
+  leftWing.rotation.z = -0.6;
+  group.add(leftWing);
+
+  const rightWing = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.1, 0.12), headMat);
+  rightWing.position.set(0.15, -0.05, 0);
+  rightWing.rotation.z = 0.6;
+  group.add(rightWing);
+
+  // Point light for the glow effect
+  const glow = new THREE.PointLight(0x44ff66, 15, 8);
+  glow.position.set(0, 0, 0);
+  group.add(glow);
+
+  scene.add(group);
+
+  // Animate: bob up/down and rotate slowly
+  const baseY = group.position.y;
+  const update = () => {
+    const t = performance.now() * 0.001;
+    group.position.y = baseY + Math.sin(t * 2) * 0.15;
+    group.rotation.y = t * 0.8;
+    // Pulse the glow
+    glow.intensity = 12 + Math.sin(t * 3) * 5;
+    glowMat.opacity = 0.7 + Math.sin(t * 3) * 0.15;
+    headMat.opacity = 0.75 + Math.sin(t * 3) * 0.15;
+    requestAnimationFrame(update);
+  };
+  update();
 }

@@ -4,7 +4,7 @@ export class Rifle extends WeaponBase {
   constructor() {
     super({
       name: 'KF7 Soviet',
-      damage: 15,
+      damage: 25,
       fireRate: 8,           // Full auto, 8 rounds/sec
       maxAmmo: 30,
       reserveAmmo: 90,
