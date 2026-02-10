@@ -17,6 +17,7 @@ Object.defineProperties = function<T>(obj: T, props: PropertyDescriptorMap & Thi
 import { PhysicsWorld } from './core/physics-world';
 import { Game } from './game';
 import { loadLevel } from './levels/level-loader';
+import { CCTVBackground } from './ui/cctv-background';
 
 async function init(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -24,10 +25,25 @@ async function init(): Promise<void> {
 
   const physics = await PhysicsWorld.create();
 
+  // Create CCTV background for main menu
+  const cctvPhysics = await PhysicsWorld.create();
+  const cctvBackground = new CCTVBackground(cctvPhysics);
+  cctvBackground.start();
+
+  // Helper to hide CCTV background
+  const hideCCTVBackground = () => {
+    const cctvCanvas = document.getElementById('cctv-render-canvas');
+    if (cctvCanvas) {
+      cctvCanvas.style.display = 'none';
+    }
+    cctvBackground.stop();
+  };
+
   // Quick Play: single room, click to start
   document.getElementById('btn-quick-play')!.addEventListener('click', () => {
     const game = new Game(canvas, physics, {});
     document.getElementById('start-screen')!.style.display = 'none';
+    hideCCTVBackground();
     game.start();
     canvas.addEventListener('click', () => game.start());
   });
@@ -47,7 +63,11 @@ async function init(): Promise<void> {
         game.onMissionComplete = () => {
           document.getElementById('mission-complete')!.style.display = 'flex';
         };
-        canvas.addEventListener('click', () => game.start());
+        canvas.addEventListener('click', () => {
+          document.getElementById('start-screen')!.style.display = 'none';
+          hideCCTVBackground();
+          game.start();
+        });
       } catch (err) {
         console.error('Mission load failed:', err);
         btn.textContent = origText ?? 'MISSION — FACILITY';
