@@ -8,6 +8,7 @@ import type {
   GrenadeExplosionEvent,
   FlashlightToggleEvent,
   DestructibleDestroyedEvent,
+  GameOverEvent,
 } from '../src/network/network-events';
 
 /**
@@ -26,6 +27,10 @@ export class GameRoom {
 
   // Anti-cheat: Fire rate validation
   private lastFireTime: Map<string, number> = new Map(); // Player ID -> last fire timestamp
+
+  // Game mode: First to X kills wins
+  private readonly KILLS_TO_WIN = 25;
+  private gameOver = false;
 
   /**
    * Spawn points for players (random selection).
@@ -226,13 +231,30 @@ export class GameRoom {
 
       // Check for death
       if (victim.health <= 0) {
+        shooter.kills += 1;
+        victim.deaths += 1;
+
         const deathEvent: PlayerDeathEvent = {
           victimId: victim.id,
           killerId: shooter.id,
+          weaponType: event.weaponType,
           timestamp: Date.now(),
         };
         this.onBroadcast?.('player:died', deathEvent);
         console.log(`[GameRoom] Player ${victim.username} killed by ${shooter.username}`);
+
+        // Check win condition
+        if (!this.gameOver && shooter.kills >= this.KILLS_TO_WIN) {
+          this.gameOver = true;
+          const gameOverEvent: GameOverEvent = {
+            winnerId: shooter.id,
+            winnerUsername: shooter.username,
+            reason: 'kills',
+            timestamp: Date.now(),
+          };
+          this.onBroadcast?.('game:over', gameOverEvent);
+          console.log(`[GameRoom] ${shooter.username} wins! (${shooter.kills} kills)`);
+        }
 
         // Schedule respawn after 3 seconds
         this.scheduleRespawn(victim.id);
@@ -438,13 +460,29 @@ export class GameRoom {
 
           // Check for death
           if (victim.health <= 0) {
+            thrower.kills += 1;
+            victim.deaths += 1;
+
             const deathEvent: PlayerDeathEvent = {
               victimId,
               killerId: event.playerId,
+              weaponType: 'pistol', // Grenade kill - use generic
               timestamp: Date.now(),
             };
             this.onBroadcast?.('player:died', deathEvent);
             console.log(`[GameRoom] Player ${victim.username} killed by ${thrower.username}'s grenade`);
+
+            if (!this.gameOver && thrower.kills >= this.KILLS_TO_WIN) {
+              this.gameOver = true;
+              const gameOverEvent: GameOverEvent = {
+                winnerId: thrower.id,
+                winnerUsername: thrower.username,
+                reason: 'kills',
+                timestamp: Date.now(),
+              };
+              this.onBroadcast?.('game:over', gameOverEvent);
+            }
+
             this.scheduleRespawn(victimId);
           }
         }
@@ -502,9 +540,12 @@ export class GameRoom {
           this.onBroadcast?.('player:damaged', damageEvent);
 
           if (victim.health <= 0) {
+            victim.deaths += 1;
+
             const deathEvent: PlayerDeathEvent = {
               victimId,
               killerId: '', // Killed by environment
+              weaponType: 'pistol', // Environment death
               timestamp: Date.now(),
             };
             this.onBroadcast?.('player:died', deathEvent);
@@ -531,6 +572,7 @@ export class GameRoom {
     }
     this.respawnTimers.clear();
 
+    this.gameOver = false;
     this.players.clear();
   }
 }

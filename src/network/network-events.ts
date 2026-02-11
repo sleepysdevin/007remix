@@ -23,6 +23,7 @@ export interface PlayerDisconnectedEvent {
  */
 export interface PlayerStateUpdate {
   playerId: string;
+  username?: string; // Set by server when broadcasting
   position: { x: number; y: number; z: number };
   rotation: number; // yaw angle in radians
   health: number;
@@ -31,7 +32,14 @@ export interface PlayerStateUpdate {
   crouching: boolean;
   isMoving: boolean;
   timestamp: number; // performance.now()
+  kills?: number;
+  deaths?: number;
 }
+
+/**
+ * Weapon type for kill feed and death events.
+ */
+export type WeaponType = 'pistol' | 'rifle' | 'shotgun' | 'sniper';
 
 /**
  * Full game state snapshot broadcast from server to all clients (20Hz).
@@ -72,6 +80,7 @@ export interface DamageEvent {
 export interface PlayerDeathEvent {
   victimId: string;
   killerId: string;
+  weaponType?: WeaponType; // Weapon used for kill (for kill feed)
   timestamp: number;
 }
 
@@ -127,6 +136,16 @@ export interface DestructibleDestroyedEvent {
 }
 
 /**
+ * Game over event - winner reached kill limit or time ran out.
+ */
+export interface GameOverEvent {
+  winnerId: string;
+  winnerUsername: string;
+  reason: 'kills' | 'time'; // kills = first to X, time = match timer ended
+  timestamp: number;
+}
+
+/**
  * Event types for Socket.IO communication.
  */
 export enum NetworkEventType {
@@ -149,4 +168,7 @@ export enum NetworkEventType {
   GRENADE_EXPLOSION = 'grenade:explosion',
   FLASHLIGHT_TOGGLE = 'flashlight:toggle',
   DESTRUCTIBLE_DESTROYED = 'destructible:destroyed',
+
+  // Game mode (Phase 4)
+  GAME_OVER = 'game:over',
 }

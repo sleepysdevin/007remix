@@ -72,16 +72,16 @@ export class KillFeed {
   }
 
   /**
-   * Get weapon icon/name for display.
+   * Get weapon label for display (tactical style: [RIFLE], [PISTOL], etc.).
    */
   private getWeaponIcon(weaponType: string): string {
-    const icons: Record<string, string> = {
-      pistol: '🔫',
-      rifle: '🔫',
-      shotgun: '🔫',
-      sniper: '🔫',
+    const labels: Record<string, string> = {
+      pistol: '[PP7]',
+      rifle: '[KF7]',
+      shotgun: '[SHOTGUN]',
+      sniper: '[SNIPER]',
     };
-    return icons[weaponType] || '💀';
+    return labels[weaponType] || '[—]';
   }
 
   /**

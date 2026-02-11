@@ -15,6 +15,8 @@ export interface ServerPlayerState {
   isMoving: boolean;
   lastUpdateTime: number;
   connected: boolean;
+  kills: number;
+  deaths: number;
 }
 
 /**
@@ -38,5 +40,7 @@ export function createPlayerState(id: string, username: string): ServerPlayerSta
     isMoving: false,
     lastUpdateTime: Date.now(),
     connected: true,
+    kills: 0,
+    deaths: 0,
   };
 }

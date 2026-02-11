@@ -8,6 +8,7 @@ export class HUD {
   private armorEl: HTMLElement;
   private grenadeEl: HTMLElement;
   private pingEl: HTMLElement;
+  private killsEl: HTMLElement;
 
   private crosshairFlashTimer = 0;
 
@@ -59,10 +60,45 @@ export class HUD {
       visibility: hidden;
     `;
     this.hudEl.appendChild(this.pingEl);
+
+    // Kills display (multiplayer only)
+    this.killsEl = document.createElement('div');
+    this.killsEl.id = 'kills-display';
+    this.killsEl.style.cssText = `
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      font-size: 14px;
+      font-family: 'Courier New', monospace;
+      color: #8f8;
+      pointer-events: none;
+      visibility: hidden;
+    `;
+    this.hudEl.appendChild(this.killsEl);
+  }
+
+  /** Update kills display (multiplayer). Pass null to hide. */
+  updateKills(kills: number | null, killsToWin = 25): void {
+    if (kills === null) {
+      this.killsEl.style.visibility = 'hidden';
+      return;
+    }
+    this.killsEl.style.visibility = 'visible';
+    this.killsEl.textContent = `Kills: ${kills} / ${killsToWin}`;
   }
 
   show(): void {
     this.hudEl.style.display = 'block';
+  }
+
+  /** Update controls hint for multiplayer (Tab = Scoreboard, I = Inventory). */
+  setMultiplayerHint(enabled: boolean): void {
+    const hint = document.getElementById('controls-hint');
+    if (hint) {
+      hint.textContent = enabled
+        ? 'Tab Scoreboard · I Inventory · Shift Sprint · C Crouch · N NV/Mask · V Flashlight'
+        : 'Tab Inventory · Shift Sprint · C Crouch · N NV/Mask · V Flashlight';
+    }
   }
 
   hide(): void {

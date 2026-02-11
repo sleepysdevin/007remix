@@ -41,10 +41,11 @@ export class RemotePlayerManager {
 
       activePlayerIds.add(playerId);
 
-      // Get or create remote player
+      // Get or create remote player (username from server broadcast)
       let remotePlayer = this.players.get(playerId);
       if (!remotePlayer) {
-        remotePlayer = new RemotePlayer(playerId, playerState.playerId, this.scene, this.physics);
+        const username = (playerState as { username?: string }).username ?? playerId;
+        remotePlayer = new RemotePlayer(playerId, username, this.scene, this.physics);
         this.players.set(playerId, remotePlayer);
 
         // Map collider handle to player ID for hit detection
@@ -53,7 +54,9 @@ export class RemotePlayerManager {
         console.log(`[RemotePlayerManager] Player ${playerId} joined`);
       }
 
-      // Update player state
+      // Update player state (sync username from server if available)
+      const username = (playerState as { username?: string }).username;
+      if (username) remotePlayer.username = username;
       remotePlayer.updateFromServer(playerState);
     }
 

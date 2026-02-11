@@ -174,6 +174,37 @@ export class DestructibleSystem {
     return this.getByColliderHandle(collider.handle) !== null;
   }
 
+  /**
+   * Destroy a prop by position and type (for multiplayer sync).
+   * Returns true if a matching prop was found and destroyed.
+   * Call with skipNetworkCallback=true to avoid echoing the destroy event.
+   */
+  destroyByPositionAndType(
+    position: { x: number; y: number; z: number },
+    type: 'crate' | 'crate_metal' | 'barrel',
+    tolerance = 0.5,
+    skipNetworkCallback = true
+  ): boolean {
+    const eventPos = new THREE.Vector3(position.x, position.y, position.z);
+    for (const prop of this.props) {
+      if (prop.health > 0 && prop.type === type) {
+        const distance = prop.position.distanceTo(eventPos);
+        if (distance < tolerance) {
+          if (skipNetworkCallback) {
+            const orig = this.onPropDestroyedFull;
+            this.onPropDestroyedFull = null;
+            this.destroy(prop);
+            this.onPropDestroyedFull = orig;
+          } else {
+            this.destroy(prop);
+          }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /** Apply damage to a specific prop. */
   damage(prop: DestructibleProp, amount: number): void {
     if (prop.health <= 0) return;

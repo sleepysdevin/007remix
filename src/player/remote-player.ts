@@ -21,7 +21,12 @@ export class RemotePlayer {
   private interpolationBuffer: InterpolationBuffer;
   private currentState: PlayerStateUpdate | null = null;
   private lastUpdateTime = 0;
-  private isDead = false;
+  private _isDead = false;
+
+  /** Whether this player is currently dead (playing death animation). */
+  get isDead(): boolean {
+    return this._isDead;
+  }
   private deathAnimationProgress = 0;
   private currentWeaponType: WeaponType = 'pistol';
   private weaponViewModel: WeaponViewModel;
@@ -95,7 +100,7 @@ export class RemotePlayer {
     if (!this.currentState) return;
 
     // Handle death animation
-    if (this.isDead) {
+    if (this._isDead) {
       this.deathAnimationProgress += dt * 2; // 0.5 second animation
 
       if (this.deathAnimationProgress < 1) {
@@ -224,7 +229,7 @@ export class RemotePlayer {
    * Play death animation (fall down, fade out).
    */
   playDeathAnimation(): void {
-    this.isDead = true;
+    this._isDead = true;
     this.deathAnimationProgress = 0;
   }
 
@@ -232,7 +237,7 @@ export class RemotePlayer {
    * Reset after respawn.
    */
   resetAfterRespawn(): void {
-    this.isDead = false;
+    this._isDead = false;
     this.deathAnimationProgress = 0;
     this.model.visible = true;
     this.model.rotation.x = 0; // Reset any death rotation

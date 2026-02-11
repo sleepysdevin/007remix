@@ -14,6 +14,7 @@ import {
   GrenadeExplosionEvent,
   FlashlightToggleEvent,
   DestructibleDestroyedEvent,
+  GameOverEvent,
 } from './network-events';
 
 /**
@@ -52,6 +53,9 @@ export class NetworkManager {
   onFlashlightToggle: ((event: FlashlightToggleEvent) => void) | null = null;
   onDestructibleDestroyed: ((event: DestructibleDestroyedEvent) => void) | null = null;
 
+  // Game mode (Phase 4)
+  onGameOver: ((event: GameOverEvent) => void) | null = null;
+
   constructor(username: string = 'Player') {
     this.username = username;
   }
@@ -61,6 +65,13 @@ export class NetworkManager {
    */
   get playerId(): string | null {
     return this._playerId;
+  }
+
+  /**
+   * Get the local player's username.
+   */
+  get localUsername(): string {
+    return this.username;
   }
 
   /**
@@ -190,6 +201,10 @@ export class NetworkManager {
       this.socket.on(NetworkEventType.DESTRUCTIBLE_DESTROYED, (event: DestructibleDestroyedEvent) => {
         this.onDestructibleDestroyed?.(event);
       });
+
+      this.socket.on(NetworkEventType.GAME_OVER, (event: GameOverEvent) => {
+        this.onGameOver?.(event);
+      });
     });
   }
 
@@ -277,5 +292,6 @@ export class NetworkManager {
     this.onGrenadeExplosion = null;
     this.onFlashlightToggle = null;
     this.onDestructibleDestroyed = null;
+    this.onGameOver = null;
   }
 }

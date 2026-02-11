@@ -26,6 +26,9 @@ import { TacticalOverlay } from './ui/tactical-overlay';
 import { DeathOverlay } from './ui/death-overlay';
 import { HitMarker } from './ui/hit-marker';
 import { KillFeed } from './ui/kill-feed';
+import { Scoreboard, type ScoreboardPlayer } from './ui/scoreboard';
+import { NameTagManager } from './ui/name-tags';
+import { GameOverOverlay } from './ui/game-over-overlay';
 import { playDestruction } from './audio/sound-effects';
 import { startMusic, stopMusic } from './audio/music';
 import { BriefingScreen } from './ui/briefing-screen';
@@ -80,6 +83,9 @@ export class Game {
   private deathOverlay: DeathOverlay;
   private hitMarker: HitMarker;
   private killFeed: KillFeed;
+  private scoreboard: Scoreboard;
+  private nameTagManager: NameTagManager | null = null;
+  private gameOverOverlay: GameOverOverlay;
 
   private destructibleSystem: DestructibleSystem;
   private doorSystem: DoorSystem | null = null;
@@ -112,6 +118,7 @@ export class Game {
   private remotePlayerManager: RemotePlayerManager | null = null;
   private lastNetworkUpdate = 0;
   private networkUpdateRate = NetworkConfig.UPDATE_RATES.PLAYER_STATE; // Hz
+  private localPlayerKills = 0;
 
   /** Called when all objectives are done and player reaches extraction (mission:complete). */
   onMissionComplete: (() => void) | null = null;
@@ -198,10 +205,12 @@ export class Game {
     this.scopeOverlay = new ScopeOverlay();
     this.tacticalOverlay = new TacticalOverlay();
 
-    // Multiplayer UI (death overlay, hit markers, kill feed)
+    // Multiplayer UI (death overlay, hit markers, kill feed, scoreboard)
     this.deathOverlay = new DeathOverlay();
     this.hitMarker = new HitMarker();
     this.killFeed = new KillFeed();
+    this.scoreboard = new Scoreboard();
+    this.gameOverOverlay = new GameOverOverlay();
 
     // Gas damage — mask protects when tactical overlay (NV/gas mask) is on
     this.grenadeSystem.onPlayerInGas = (damage) => {
@@ -361,10 +370,12 @@ export class Game {
     if (this.networkMode === 'client' && this.networkManager) {
       this.remotePlayerManager = new RemotePlayerManager(this.scene, this.physics);
       this.remotePlayerManager.setLocalPlayerId(this.networkManager.playerId ?? '');
+      this.nameTagManager = new NameTagManager(this.fpsCamera.camera);
 
       // Handle game state snapshots from server
       this.networkManager.onGameStateSnapshot = (snapshot) => {
         this.remotePlayerManager?.updateFromSnapshot(snapshot);
+        this.updateScoreboardFromSnapshot(snapshot);
       };
 
       // Handle weapon fire events (Phase 4: animations + spatial audio)
@@ -450,7 +461,7 @@ export class Game {
           }
         }
 
-        // Add to kill feed
+        // Add to kill feed (with weapon type from server)
         const killerPlayer = event.killerId === this.networkManager?.playerId
           ? { username: 'You' }
           : this.remotePlayerManager?.getPlayer(event.killerId);
@@ -460,9 +471,9 @@ export class Game {
 
         const killerName = killerPlayer?.username ?? 'Unknown';
         const victimName = victimPlayer?.username ?? 'Unknown';
+        const weaponType = event.weaponType ?? 'pistol';
 
-        // TODO: Get actual weapon type from event
-        this.killFeed.addKill(killerName, victimName, 'pistol');
+        this.killFeed.addKill(killerName, victimName, weaponType);
       };
 
       // Handle respawn events (Phase 4)
@@ -530,34 +541,26 @@ export class Game {
         }
       };
 
+      // Handle game over (Phase 4 - win conditions)
+      this.networkManager.onGameOver = (event) => {
+        document.exitPointerLock();
+        const isLocalWinner = event.winnerId === this.networkManager?.playerId;
+        this.gameOverOverlay.setCallbacks({
+          onExit: () => this.exitToMenu(),
+        });
+        this.gameOverOverlay.show(event.winnerUsername, event.reason, isLocalWinner);
+      };
+
       // Handle destructible destroyed events (Phase 5)
       this.networkManager.onDestructibleDestroyed = (event) => {
-        console.log(`[Game] Remote destructible ${event.type} destroyed at (${event.position.x}, ${event.position.y}, ${event.position.z})`);
-
-        // Find and destroy the matching prop by position (within 0.5 unit tolerance)
-        if (this.level?.destructibleSystem) {
-          const destructibleSystem = this.level.destructibleSystem as any;
-          const props = destructibleSystem.props as any[];
-          const eventPos = new THREE.Vector3(event.position.x, event.position.y, event.position.z);
-
-          for (const prop of props) {
-            if (prop.health > 0 && prop.type === event.type) {
-              const distance = prop.position.distanceTo(eventPos);
-              if (distance < 0.5) {
-                // Temporarily disable callback to prevent echo loop
-                const originalCallback = destructibleSystem.onPropDestroyedFull;
-                destructibleSystem.onPropDestroyedFull = null;
-
-                // Destroy this prop
-                destructibleSystem.destroy(prop);
-                console.log(`[Game] Destroyed remote ${prop.type} at distance ${distance.toFixed(2)}`);
-
-                // Restore callback
-                destructibleSystem.onPropDestroyedFull = originalCallback;
-                break;
-              }
-            }
-          }
+        const destroyed = this.destructibleSystem.destroyByPositionAndType(
+          event.position,
+          event.type,
+          0.5,
+          true
+        );
+        if (destroyed) {
+          console.log(`[Game] Destructible ${event.type} destroyed at (${event.position.x}, ${event.position.y}, ${event.position.z})`);
         }
       };
 
@@ -655,6 +658,7 @@ export class Game {
     this.input.requestPointerLock();
     document.getElementById('start-screen')!.style.display = 'none';
     this.hud.show();
+    if (this.networkMode === 'client') this.hud.setMultiplayerHint(true);
     if (this.levelMode && this.objectivesDisplay) this.objectivesDisplay.show();
     this.loop.start();
     // Start the spy-thriller background music
@@ -680,6 +684,47 @@ export class Game {
     stopMusic();
     // Reload the page to cleanly reset everything (physics, scene, etc.)
     window.location.reload();
+  }
+
+  /**
+   * Update scoreboard from server game state snapshot (multiplayer only).
+   */
+  private updateScoreboardFromSnapshot(snapshot: { players: Record<string, { playerId?: string; username?: string; kills?: number; deaths?: number }> }): void {
+    if (!this.networkManager) return;
+
+    const localId = this.networkManager.playerId ?? '';
+    const localState = snapshot.players[localId] as { kills?: number } | undefined;
+    if (localState?.kills !== undefined) this.localPlayerKills = localState.kills;
+
+    const players: ScoreboardPlayer[] = [];
+    const localPing = this.networkManager.ping ?? 0;
+    const localUsername = this.networkManager.localUsername;
+
+    for (const [playerId, state] of Object.entries(snapshot.players)) {
+      const p = state as { playerId?: string; username?: string; kills?: number; deaths?: number };
+      players.push({
+        id: playerId,
+        username: p.username ?? playerId,
+        kills: p.kills ?? 0,
+        deaths: p.deaths ?? 0,
+        ping: playerId === localId ? localPing : undefined,
+        isLocalPlayer: playerId === localId,
+      });
+    }
+
+    // If no server data yet, add local player
+    if (players.length === 0 && localId) {
+      players.push({
+        id: localId,
+        username: localUsername,
+        kills: 0,
+        deaths: 0,
+        ping: localPing,
+        isLocalPlayer: true,
+      });
+    }
+
+    this.scoreboard.update(players);
   }
 
   private handleTrigger(event: string): void {
@@ -721,12 +766,26 @@ export class Game {
     // Track mission time
     if (this.levelMode) this.missionElapsed += dt;
 
-    // Inventory toggle (Tab)
-    if (this.input.wasKeyJustPressed('Tab')) {
+    // Scoreboard toggle (Tab) - multiplayer only
+    if (this.networkMode === 'client' && this.networkManager) {
+      if (this.input.wasKeyJustPressed('Tab')) {
+        if (this.scoreboard.visible) {
+          this.scoreboard.hide();
+          if (this.started) this.input.requestPointerLock();
+        } else {
+          document.exitPointerLock();
+          this.scoreboard.show();
+        }
+      }
+    }
+
+    // Inventory toggle (Tab in single-player, I in multiplayer)
+    const inventoryKey = this.networkMode === 'client' ? 'i' : 'tab';
+    if (this.input.wasKeyJustPressed(inventoryKey)) {
       if (this.inventoryScreen.isOpen) {
         this.inventoryScreen.hide();
         if (this.started) this.input.requestPointerLock();
-        this.input.resetMouse(); // So same Tab doesn't reopen next frame
+        this.input.resetMouse(); // So same key doesn't reopen next frame
       } else {
         document.exitPointerLock();
         this.inventoryScreen.show(
@@ -888,11 +947,13 @@ export class Game {
     this.hud.updateArmor(this.player.armor);
     this.hud.updateGrenades(this.gasGrenadeCount, this.fragGrenadeCount);
     this.hud.updateWeapon(this.weaponManager.currentWeapon);
-    // Show ping only in multiplayer
+    // Show ping and kills only in multiplayer
     if (this.networkMode === 'client' && this.networkManager) {
       this.hud.updatePing(this.networkManager.ping);
+      this.hud.updateKills(this.localPlayerKills, 25);
     } else {
       this.hud.updatePing(null);
+      this.hud.updateKills(null);
     }
     this.hud.update(dt);
 
@@ -926,6 +987,17 @@ export class Game {
 
       // Update remote players
       this.remotePlayerManager?.update(dt);
+
+      // Update name tags (project 3D positions to screen)
+      if (this.nameTagManager) {
+        const targets = this.remotePlayerManager!.getAll().map((p) => ({
+          id: p.id,
+          username: p.username,
+          getPosition: () => p.getPosition(),
+          isDead: p.isDead,
+        }));
+        this.nameTagManager.update(targets);
+      }
     }
 
     // Reset per-frame input
