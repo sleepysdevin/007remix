@@ -3,15 +3,37 @@
  */
 
 /**
+ * Get the server URL based on environment.
+ * In production, connects to the same origin serving the app.
+ * In development, connects to localhost:3001.
+ */
+function getServerURL(): string {
+  // Check if we have an explicit server URL set
+  if (import.meta.env.VITE_SERVER_URL) {
+    return import.meta.env.VITE_SERVER_URL;
+  }
+
+  // In production (when served from a domain), use the same origin
+  // This works because our production server serves both static files AND Socket.IO
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    return window.location.origin;
+  }
+
+  // In development, use localhost:3001
+  return 'http://localhost:3001';
+}
+
+/**
  * Server connection configuration.
  */
 export const NetworkConfig = {
   /**
-   * Server URL. Defaults to localhost for development.
-   * In production, set this to your deployed server URL.
+   * Server URL. Auto-detects based on environment:
+   * - Production: Same origin as the app (window.location.origin)
+   * - Development: http://localhost:3001
+   * - Override: VITE_SERVER_URL environment variable
    */
-  SERVER_URL:
-    import.meta.env.VITE_SERVER_URL || 'http://localhost:3001',
+  SERVER_URL: getServerURL(),
 
   /**
    * Reconnection configuration.

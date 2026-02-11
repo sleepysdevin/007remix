@@ -25,10 +25,9 @@ services:
       # Internal port (must match what server listens on)
       - PORT=${PORT:-3000}
 
-      # Server URL for Socket.IO client connections
-      # Coolify magic variable SERVICE_FQDN_GAME provides the assigned domain
-      # Falls back to localhost for local testing
-      - VITE_SERVER_URL=${SERVICE_FQDN_GAME:-http://localhost:3000}
+      # VITE_SERVER_URL is optional - client auto-detects the server URL
+      # Set this only if you need to override the auto-detection
+      # - VITE_SERVER_URL=${SERVICE_FQDN_GAME}
 
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1"]
