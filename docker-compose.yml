@@ -1,0 +1,37 @@
+# Coolify-compatible Docker Compose file for 007 Remix
+#
+# DEPLOYMENT STEPS:
+# 1. In Coolify: New Resource → Service → Docker Compose
+# 2. Paste this compose file
+# 3. Set environment variables in Coolify UI:
+#    - GITHUB_REPOSITORY=howieduhzit/00doge
+#    - IMAGE_TAG=main
+# 4. After initial deployment, go to service → Domains
+# 5. Add your domain (e.g., game.yourdomain.com)
+# 6. Coolify will auto-configure SSL via Let's Encrypt
+#
+# IMPORTANT: Do NOT add ports: section - Coolify handles routing via Traefik
+
+services:
+  game:
+    image: ghcr.io/${GITHUB_REPOSITORY:-howieduhzit/00doge}:${IMAGE_TAG:-main}
+
+    restart: unless-stopped
+
+    environment:
+      # Node.js environment
+      - NODE_ENV=production
+
+      # Internal port (must match what server listens on)
+      - PORT=${PORT:-3000}
+
+      # VITE_SERVER_URL is optional - client auto-detects the server URL
+      # Set this only if you need to override the auto-detection
+      # - VITE_SERVER_URL=${SERVICE_FQDN_GAME}
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

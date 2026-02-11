@@ -1,4 +1,4 @@
-import { ServerPlayerState, createPlayerState } from './player-state';
+import { ServerPlayerState, createPlayerState } from './player-state.js';
 import type {
   WeaponFireEvent,
   DamageEvent,
@@ -9,7 +9,7 @@ import type {
   FlashlightToggleEvent,
   DestructibleDestroyedEvent,
   GameOverEvent,
-} from '../src/network/network-events';
+} from '../src/network/network-events.js';
 
 /**
  * GameRoom manages a single multiplayer session/match.

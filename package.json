@@ -5,19 +5,25 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "vite build",
+    "build:server": "tsc -p server/tsconfig.json",
     "preview": "vite preview",
-    "server": "tsx server/server.ts"
+    "server": "tsx server/server.ts",
+    "start": "node server-production.js",
+    "docker:build": "docker build -t 007remix:latest .",
+    "docker:run": "docker run -p 3000:3000 -e NODE_ENV=production 007remix:latest"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "three": "^0.172.0"
   },
   "devDependencies": {
     "@types/node": "^20.19.33",
     "@types/three": "^0.172.0",
-    "socket.io": "^4.8.3",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
