@@ -18,14 +18,9 @@ services:
   game:
     # Image from GitHub Container Registry
     # Update GITHUB_REPOSITORY in Coolify environment variables
-    image: ghcr.io/${GITHUB_REPOSITORY:-yourusername/007remix}:${IMAGE_TAG:-main}
+    image: ghcr.io/${GITHUB_REPOSITORY:-howieduhzit/00doge}:${IMAGE_TAG:-main}
 
-    container_name: 007remix-game
     restart: unless-stopped
-
-    # Expose port 3000 (serves both static files and Socket.IO)
-    ports:
-      - "3000:3000"
 
     environment:
       # Node environment
