@@ -22,6 +22,68 @@ export const GUARD_VARIANTS: Record<string, GuardVariant> = {
 
 // Shared texture cache (one GPU upload per variant)
 const textureCache = new Map<string, THREE.CanvasTexture>();
+const imageTextureCache = new Map<string, THREE.Texture>();
+
+/** Sprite source config: 'procedural' uses Canvas drawing, 'image' loads from URL */
+export type SpriteSourceType = 'procedural' | 'image';
+
+/** Config for choosing sprite source. When type is 'image', url must be set. */
+export interface SpriteSourceConfig {
+  type: SpriteSourceType;
+  url?: string;
+}
+
+/** Default: procedural sprites. Set to use image-based sprites from baked PNG. */
+export let spriteSourceConfig: SpriteSourceConfig = { type: 'procedural' };
+
+export function setSpriteSourceConfig(config: SpriteSourceConfig): void {
+  spriteSourceConfig = config;
+}
+
+/** Preloaded texture for image-based sprites (set by preloadEnemySpriteSheet) */
+let preloadedImageTexture: THREE.Texture | null = null;
+
+/**
+ * Preload an image sprite sheet for sync use in EnemyBase.
+ * Call at game init before spawning enemies with image sprites.
+ */
+export function preloadEnemySpriteSheet(url: string): Promise<THREE.Texture> {
+  return loadSpriteSheetFromImage(url).then((tex) => {
+    preloadedImageTexture = tex;
+    return tex;
+  });
+}
+
+/** Get preloaded image texture, or null if not loaded. */
+export function getPreloadedSpriteTexture(): THREE.Texture | null {
+  return preloadedImageTexture;
+}
+
+/**
+ * Load a sprite sheet from an image URL (e.g. baked from 3D model).
+ * Cached by URL. Expects 5×3 atlas layout (320×288 px at 64×96 per frame).
+ */
+export function loadSpriteSheetFromImage(url: string): Promise<THREE.Texture> {
+  const cached = imageTextureCache.get(url);
+  if (cached) return Promise.resolve(cached);
+
+  return new Promise((resolve, reject) => {
+    const loader = new THREE.TextureLoader();
+    loader.load(
+      url,
+      (texture) => {
+        texture.magFilter = THREE.NearestFilter;
+        texture.minFilter = THREE.NearestFilter;
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        imageTextureCache.set(url, texture);
+        resolve(texture);
+      },
+      undefined,
+      reject,
+    );
+  });
+}
 
 /**
  * Generate a sprite-sheet canvas + Three.js CanvasTexture for a guard variant.

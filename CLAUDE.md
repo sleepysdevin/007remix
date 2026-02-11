@@ -195,7 +195,14 @@ server/
 └── player-state.ts      # Server-side player state type
 
 public/
-└── levels/              # JSON level definitions (facility.json)
+├── levels/              # JSON level definitions (facility.json)
+├── models/              # GLB/GLTF 3D models (for future sprite baking)
+└── sprites/             # Baked sprite sheets (from npm run bake-sprites)
+
+scripts/
+├── bake-sprites.ts      # Offline sprite baker (Puppeteer + Three.js)
+├── bake-runner.ts       # Browser-side bake logic
+└── bake.html            # Baker page entry
 ```
 
 ## Common Tasks
@@ -213,6 +220,13 @@ public/
 1. Create variant in `src/enemies/sprite/guard-sprite-sheet.ts`
 2. Update sprite sheet generator with new animation frames
 3. Spawn with `enemyManager.spawnEnemy({ x, y, z, facingAngle })`
+
+### Sprite Baking (3D Model to 2D Sprite)
+
+1. **Offline bake**: Run `npm run bake-sprites` to render procedural guard model to `public/sprites/enemy-guard.png`
+2. **Use baked sprites**: Call `setEnemyRenderConfig({ mode: 'sprite', spriteSource: 'image', spriteImageUrl: '/sprites/enemy-guard.png' })` before game starts; at init call `preloadEnemySpriteSheet('/sprites/enemy-guard.png')`
+3. **Runtime bake**: Use `setEnemyRenderConfig({ mode: 'sprite', spriteSource: 'baked' })` to bake from 3D at runtime (no preload)
+4. **Procedural sprites**: Use `setEnemyRenderConfig({ mode: 'sprite', spriteSource: 'procedural' })` for Canvas 2D drawn sprites
 
 ### Creating a New Level
 

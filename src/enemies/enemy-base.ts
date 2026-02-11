@@ -3,15 +3,28 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsWorld } from '../core/physics-world';
 import { StateMachine } from './ai/state-machine';
 import { EnemyModel } from './model/enemy-model';
+import { EnemyCustomModel } from './model/enemy-custom-model';
+import { EnemySprite } from './sprite/enemy-sprite';
+import { bakeGuardSpriteSheet, bakeCustomModelSpriteSheet } from './sprite/sprite-baker';
+import { getPreloadedSpriteTexture } from './sprite/guard-sprite-sheet';
+import { getCachedEnemyModel } from '../core/model-loader';
+import { ENEMY_RENDER_CONFIG } from './enemy-render-config';
 import { type GuardVariant, GUARD_VARIANTS } from './sprite/guard-sprite-sheet';
 
 const BODY_RADIUS = 0.3;
 const BODY_HEIGHT = 1.4;
 const EYE_HEIGHT = 1.6;
 
+/** Visual representation: 3D model or 2D sprite. Both share mesh, shadowMesh, update, play, triggerHitFlash. */
+type EnemyVisual = EnemyModel | EnemyCustomModel | EnemySprite;
+
+function isSprite(v: EnemyVisual): v is EnemySprite {
+  return 'billboardToCamera' in v;
+}
+
 export class EnemyBase {
   readonly group: THREE.Group;
-  readonly model: EnemyModel;
+  readonly model: EnemyVisual;
   readonly rigidBody: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
   readonly stateMachine: StateMachine<EnemyBase>;
@@ -55,8 +68,27 @@ export class EnemyBase {
     this.group.position.set(x, y, z);
     this.group.rotation.y = facingAngle;
 
-    // Low-poly 3D model
-    this.model = new EnemyModel(variant);
+    const cfg = ENEMY_RENDER_CONFIG;
+    if (cfg.mode === 'sprite') {
+      let spriteSource: THREE.Texture | GuardVariant;
+      if (cfg.customModelPath) {
+        const gltf = getCachedEnemyModel();
+        spriteSource = gltf ? bakeCustomModelSpriteSheet(gltf) : variant;
+      } else if (cfg.spriteSource === 'baked') {
+        spriteSource = bakeGuardSpriteSheet(variant.name);
+      } else if (cfg.spriteSource === 'image' && cfg.spriteImageUrl) {
+        const tex = getPreloadedSpriteTexture();
+        spriteSource = tex ?? variant;
+      } else {
+        spriteSource = variant;
+      }
+      this.model = new EnemySprite(spriteSource);
+    } else if (cfg.customModelPath) {
+      const gltf = getCachedEnemyModel();
+      this.model = gltf ? new EnemyCustomModel(gltf) : new EnemyModel(variant);
+    } else {
+      this.model = new EnemyModel(variant);
+    }
     this.group.add(this.model.mesh);
     this.group.add(this.model.shadowMesh);
 
@@ -132,31 +164,27 @@ export class EnemyBase {
   }
 
   /** Update death animation and hit flash */
-  private updateVisuals(dt: number): void {
-    // Hit flash timer
+  private updateVisuals(dt: number, cameraPosition?: THREE.Vector3): void {
+    if (isSprite(this.model) && cameraPosition) {
+      this.model.billboardToCamera(cameraPosition, this.group.position, this.group.rotation.y);
+    }
     if (this.hitFlashTimer > 0) {
       this.hitFlashTimer -= dt;
     }
-
-    // Death: advance timer (sprite animation handles visuals)
     if (this.dead) {
       this.deathTimer += dt;
     }
-
-    // Alert cooldown
     if (this.alertCooldown > 0) {
       this.alertCooldown -= dt;
     }
-
-    // Update model animation
     this.model.update(dt);
   }
 
-  update(dt: number, _cameraPosition?: THREE.Vector3): void {
+  update(dt: number, cameraPosition?: THREE.Vector3): void {
     if (!this.dead) {
       this.stateMachine.update(this, dt);
       this.updateFacing(dt);
     }
-    this.updateVisuals(dt);
+    this.updateVisuals(dt, cameraPosition);
   }
 }

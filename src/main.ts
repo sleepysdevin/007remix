@@ -22,12 +22,84 @@ import { ScreenGlitch } from './ui/screen-glitch';
 import { NetworkManager } from './network/network-manager';
 import { LobbyScreen } from './ui/lobby-screen';
 import { SettingsMenu } from './ui/settings-menu';
+import { setEnemyRenderConfig, ENEMY_RENDER_CONFIG } from './enemies/enemy-render-config';
+import { preloadEnemySpriteSheet } from './enemies/sprite/guard-sprite-sheet';
+import { preloadCustomEnemyModel, preloadCustomPlayerModel } from './core/model-loader';
+
+const STORAGE_RENDER_MODE = '007remix_enemy_render_mode';
+
+function getRenderMode(): '2d' | '3d' {
+  try {
+    const s = localStorage.getItem(STORAGE_RENDER_MODE);
+    if (s === '2d' || s === '3d') return s;
+  } catch {}
+  return '3d';
+}
+
+function setRenderMode(mode: '2d' | '3d'): void {
+  try {
+    localStorage.setItem(STORAGE_RENDER_MODE, mode);
+  } catch {}
+  if (mode === '2d') {
+    setEnemyRenderConfig({ mode: 'sprite', spriteSource: 'image', spriteImageUrl: '/sprites/enemy-guard.png' });
+  } else {
+    setEnemyRenderConfig({ mode: 'model' });
+  }
+}
+
+function applyRenderModeUI(mode: '2d' | '3d'): void {
+  const btn2d = document.getElementById('btn-render-2d');
+  const btn3d = document.getElementById('btn-render-3d');
+  if (btn2d) btn2d.classList.toggle('active', mode === '2d');
+  if (btn3d) btn3d.classList.toggle('active', mode === '3d');
+}
 
 async function init(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   if (!canvas) throw new Error('Canvas not found');
 
   const physics = await PhysicsWorld.create();
+
+  // Preload 2D sprite sheet (for when user selects 2D)
+  preloadEnemySpriteSheet('/sprites/enemy-guard.png').catch(() => {
+    // Fallback: baked PNG may not exist; runtime bake will be used
+  });
+
+  // Preload custom enemy model (for 3D and 2D sprite baking)
+  const customPath = ENEMY_RENDER_CONFIG.customModelPath;
+  let customModelReady: Promise<void> = Promise.resolve();
+  if (customPath) {
+    customModelReady = preloadCustomEnemyModel(customPath)
+      .then(() => {})
+      .catch((err) => {
+        console.warn('Custom enemy model failed to load:', err);
+      });
+  }
+
+  // Preload custom player model (for remote player avatars in multiplayer)
+  const playerPath = ENEMY_RENDER_CONFIG.customPlayerModelPath;
+  let customPlayerModelReady: Promise<void> = Promise.resolve();
+  if (playerPath) {
+    customPlayerModelReady = preloadCustomPlayerModel(playerPath)
+      .then(() => {})
+      .catch((err) => {
+        console.warn('Custom player model failed to load:', err);
+      });
+  }
+
+  // Apply saved render mode and set up 2D/3D toggle
+  const initialMode = getRenderMode();
+  setRenderMode(initialMode);
+  applyRenderModeUI(initialMode);
+
+  document.getElementById('btn-render-2d')?.addEventListener('click', () => {
+    setRenderMode('2d');
+    applyRenderModeUI('2d');
+  });
+  document.getElementById('btn-render-3d')?.addEventListener('click', () => {
+    setRenderMode('3d');
+    applyRenderModeUI('3d');
+  });
 
   // Create CCTV background for main menu
   const cctvPhysics = await PhysicsWorld.create();
@@ -49,7 +121,9 @@ async function init(): Promise<void> {
   };
 
   // Quick Play: single room, click to start
-  document.getElementById('btn-quick-play')!.addEventListener('click', () => {
+  document.getElementById('btn-quick-play')!.addEventListener('click', async () => {
+    const cfg = ENEMY_RENDER_CONFIG;
+    if (cfg.mode === 'sprite' && cfg.customModelPath) await customModelReady;
     const game = new Game(canvas, physics, {});
     document.getElementById('start-screen')!.style.display = 'none';
     hideCCTVBackground();
@@ -66,6 +140,8 @@ async function init(): Promise<void> {
       btn.textContent = 'LOADING...';
       btn.disabled = true;
       try {
+        const cfg = ENEMY_RENDER_CONFIG;
+        if (cfg.mode === 'sprite' && cfg.customModelPath) await customModelReady;
         const level = await loadLevel('/levels/facility.json');
         const game = new Game(canvas, physics, { levelMode: true });
         game.showBriefing(level);
@@ -106,6 +182,9 @@ async function init(): Promise<void> {
       lobbyScreen.show({
         onJoin: async (username) => {
           try {
+            const cfg = ENEMY_RENDER_CONFIG;
+            if (cfg.mode === 'sprite' && cfg.customModelPath) await customModelReady;
+            if (cfg.customPlayerModelPath) await customPlayerModelReady;
             const networkManager = new NetworkManager(username);
             await networkManager.connect();
 

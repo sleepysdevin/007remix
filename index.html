@@ -110,8 +110,38 @@
       color: #aaa;
       margin-top: 20px;
     }
+    #start-screen .render-mode {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-top: 24px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      letter-spacing: 2px;
+      color: #aaa;
+    }
+    #start-screen .render-mode button {
+      padding: 8px 20px;
+      font-size: 12px;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 2px;
+      background: transparent;
+      color: #888;
+      border: 1px solid #666;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    #start-screen .render-mode button:hover {
+      color: #d4af37;
+      border-color: #d4af37;
+    }
+    #start-screen .render-mode button.active {
+      background: rgba(212, 175, 55, 0.2);
+      color: #d4af37;
+      border-color: #d4af37;
+    }
     #start-screen .menu {
-      margin-top: 40px;
+      margin-top: 24px;
       display: flex;
       flex-direction: column;
       gap: 16px;
@@ -261,6 +291,11 @@
     <p class="drip-text">(NOT A)</p>
     <h1>007</h1>
     <p class="subtitle">REMIX</p>
+    <div class="render-mode">
+      <span>ENEMIES:</span>
+      <button type="button" id="btn-render-3d" class="active">3D</button>
+      <button type="button" id="btn-render-2d">2D</button>
+    </div>
     <div class="menu">
       <button type="button" id="btn-quick-play">QUICK PLAY</button>
       <button type="button" id="btn-mission">MISSION — FACILITY</button>
