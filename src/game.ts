@@ -49,6 +49,7 @@ import {
 import type { NetworkManager } from './network/network-manager';
 import { RemotePlayerManager } from './player/remote-player-manager';
 import { NetworkConfig } from './network/network-config';
+import { GameSettings } from './core/game-settings';
 
 const PHYSICS_STEP = 1 / 60;
 
@@ -121,8 +122,10 @@ export class Game {
   private missionElapsed = 0;
   private levelName = '';
 
-  // Reusable vector to avoid per-frame heap allocations
+  // Reusable vectors to avoid per-frame heap allocations
   private readonly _playerVec = new THREE.Vector3();
+  private readonly _aimAssistLookDir = new THREE.Vector3();
+  private readonly _aimAssistToTarget = new THREE.Vector3();
 
   // Multiplayer networking
   private networkMode: 'local' | 'client';
@@ -136,11 +139,14 @@ export class Game {
   /** Called when all objectives are done and player reaches extraction (mission:complete). */
   onMissionComplete: (() => void) | null = null;
 
+  private readonly canvas: HTMLCanvasElement;
+
   constructor(
     canvas: HTMLCanvasElement,
     physics: PhysicsWorld,
     options: GameOptions = {},
   ) {
+    this.canvas = canvas;
     this.levelMode = options.levelMode ?? false;
     this.networkMode = options.networkMode ?? 'local';
     this.networkManager = options.networkManager ?? null;
@@ -358,6 +364,9 @@ export class Game {
     this.pauseMenu.onExit = () => {
       this.exitToMenu();
     };
+
+    // Click canvas to re-engage pointer lock (e.g. after screenshot, clicking outside)
+    this.canvas.addEventListener('click', this.onCanvasClick);
 
     // Mission complete screen
     this.missionCompleteScreen = new MissionCompleteScreen();
@@ -708,6 +717,14 @@ export class Game {
     this.input.resetMouse();
   }
 
+  private onCanvasClick = (): void => {
+    if (MobileControls.isSupported()) return;
+    if (!this.started || this.paused || this.missionComplete) return;
+    if (this.inventoryScreen.isOpen || this.scoreboard.visible) return;
+    if (this.input.pointerLocked) return;
+    this.input.requestPointerLock();
+  };
+
   private exitToMenu(): void {
     this.paused = false;
     this.loop.stop();
@@ -882,8 +899,40 @@ export class Game {
       return; // Don't update camera, weapons, or gameplay while inventory is open
     }
 
-    // Update camera from mouse input
-    this.fpsCamera.update(this.input);
+    // Aim assist (single-player only)
+    let aimAssistDelta: { yaw: number; pitch: number } | undefined;
+    let lookScale = 1;
+    const aimStrength = GameSettings.getAimAssistStrength();
+    const aimMode = GameSettings.getAimAssistMode();
+    if (aimStrength > 0 && aimMode !== 'off' && this.networkMode !== 'client') {
+      this.fpsCamera.getLookDirection(this._aimAssistLookDir);
+      const hit = this.enemyManager.getBestAimAssistTarget(
+        this.fpsCamera.camera.position,
+        this._aimAssistLookDir,
+        0.12, // ~7° cone
+        35,
+      );
+      if (hit) {
+        this._aimAssistToTarget.subVectors(hit.target, this.fpsCamera.camera.position).normalize();
+        const targetYaw = Math.atan2(this._aimAssistToTarget.x, -this._aimAssistToTarget.z);
+        const targetPitch = Math.asin(Math.max(-1, Math.min(1, this._aimAssistToTarget.y)));
+        const curYaw = Math.atan2(this._aimAssistLookDir.x, -this._aimAssistLookDir.z);
+        const curPitch = Math.asin(Math.max(-1, Math.min(1, this._aimAssistLookDir.y)));
+        let dYaw = targetYaw - curYaw;
+        while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+        while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+        const dPitch = targetPitch - curPitch;
+        if (aimMode === 'pull') {
+          const pull = aimStrength * 0.15;
+          aimAssistDelta = { yaw: dYaw * pull, pitch: dPitch * pull };
+        } else if (aimMode === 'slowdown') {
+          lookScale = 1 - aimStrength * 0.7;
+        }
+      }
+    }
+
+    // Update camera from mouse input (scales sensitivity by FOV when scoped)
+    this.fpsCamera.update(this.input, aimAssistDelta, lookScale);
 
     // Weapons (before physics, so fire input is responsive)
     this.weaponManager.update(this.input, dt);

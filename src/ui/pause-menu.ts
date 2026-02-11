@@ -1,13 +1,13 @@
 /**
  * Pause menu overlay — Escape to toggle.
  * Resume or exit back to the start screen.
- * Includes sensitivity sliders.
  */
 
-import { SensitivitySettings } from '../core/sensitivity-settings';
+import { SettingsMenu } from './settings-menu';
 
 export class PauseMenu {
   private overlay: HTMLDivElement;
+  private settingsMenu: SettingsMenu;
   private _isOpen = false;
 
   /** Fires when user clicks Resume */
@@ -16,6 +16,9 @@ export class PauseMenu {
   onExit: (() => void) | null = null;
 
   constructor() {
+    this.settingsMenu = new SettingsMenu();
+    this.settingsMenu.onBack = () => this.overlay.style.display = 'flex';
+
     this.overlay = document.createElement('div');
     this.overlay.id = 'pause-menu';
     this.overlay.style.cssText = `
@@ -43,30 +46,6 @@ export class PauseMenu {
     `;
     this.overlay.appendChild(title);
 
-    // Sensitivity section
-    const settingsSection = document.createElement('div');
-    settingsSection.style.cssText = `
-      margin-bottom: 28px;
-      padding: 16px 24px;
-      background: rgba(0,0,0,0.4);
-      border: 1px solid rgba(212, 175, 55, 0.3);
-      border-radius: 4px;
-    `;
-    const settingsTitle = document.createElement('div');
-    settingsTitle.textContent = 'SENSITIVITY';
-    settingsTitle.style.cssText = `
-      font-size: 12px;
-      letter-spacing: 4px;
-      margin-bottom: 16px;
-      color: rgba(212, 175, 55, 0.9);
-    `;
-    settingsSection.appendChild(settingsTitle);
-    const s = SensitivitySettings.get();
-    settingsSection.appendChild(this.createSlider('Mouse', s.mouse, (v) => SensitivitySettings.set({ mouse: v })));
-    settingsSection.appendChild(this.createSlider('Gamepad', s.gamepad, (v) => SensitivitySettings.set({ gamepad: v })));
-    settingsSection.appendChild(this.createSlider('Mobile', s.mobile, (v) => SensitivitySettings.set({ mobile: v })));
-    this.overlay.appendChild(settingsSection);
-
     const btnContainer = document.createElement('div');
     btnContainer.style.cssText = `
       display: flex;
@@ -82,6 +61,13 @@ export class PauseMenu {
     });
     btnContainer.appendChild(resumeBtn);
 
+    const settingsBtn = this.createButton('SETTINGS');
+    settingsBtn.addEventListener('click', () => {
+      this.overlay.style.display = 'none';
+      this.settingsMenu.show();
+    });
+    btnContainer.appendChild(settingsBtn);
+
     const exitBtn = this.createButton('EXIT TO MENU');
     exitBtn.addEventListener('click', () => {
       this.hide();
@@ -91,9 +77,17 @@ export class PauseMenu {
 
     this.overlay.appendChild(btnContainer);
 
+    // Click anywhere on overlay (except buttons) to resume
+    this.overlay.addEventListener('click', (e) => {
+      if (!(e.target as Element).closest('button')) {
+        this.hide();
+        this.onResume?.();
+      }
+    });
+
     // Hint at bottom
     const hint = document.createElement('div');
-    hint.textContent = 'Press Escape to resume';
+    hint.textContent = 'Click or press Escape to resume';
     hint.style.cssText = `
       position: absolute;
       bottom: 30px;
@@ -104,41 +98,6 @@ export class PauseMenu {
     this.overlay.appendChild(hint);
 
     document.body.appendChild(this.overlay);
-  }
-
-  private createSlider(label: string, value: number, onChange: (v: number) => void): HTMLDivElement {
-    const row = document.createElement('div');
-    row.style.cssText = `display: flex; align-items: center; gap: 12px; margin-bottom: 10px; min-width: 220px;`;
-    const lab = document.createElement('label');
-    lab.textContent = label;
-    lab.style.cssText = `width: 70px; font-size: 12px; letter-spacing: 1px;`;
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = '0';
-    input.max = '100';
-    input.value = String(value);
-    input.style.cssText = `
-      flex: 1;
-      height: 6px;
-      -webkit-appearance: none;
-      appearance: none;
-      background: rgba(212, 175, 55, 0.2);
-      border-radius: 3px;
-      outline: none;
-    `;
-    input.addEventListener('input', () => {
-      const v = parseInt(input.value, 10);
-      onChange(v);
-    });
-    const valSpan = document.createElement('span');
-    valSpan.style.cssText = `width: 28px; font-size: 11px; color: rgba(255,255,255,0.7);`;
-    const updateVal = () => { valSpan.textContent = `${input.value}%`; };
-    input.addEventListener('input', updateVal);
-    updateVal();
-    row.appendChild(lab);
-    row.appendChild(input);
-    row.appendChild(valSpan);
-    return row;
   }
 
   private createButton(text: string): HTMLButtonElement {

@@ -21,22 +21,27 @@ export class MobileControls {
   private container: HTMLDivElement;
   private moveStickEl: HTMLDivElement;
   private lookZoneEl: HTMLDivElement;
-  private fireBtn: HTMLDivElement;
   private jumpBtn: HTMLDivElement;
   private crouchBtn: HTMLDivElement;
   private reloadBtn: HTMLDivElement;
   private sprintBtn: HTMLDivElement;
 
   private moveStickActive = false;
+  private moveStickTouchId: number | null = null;
   private moveStickOrigin = { x: 0, y: 0 };
   private moveStickOffset = { x: 0, y: 0 };
   private moveStickRadius = 50;
 
   private lookTouchActive = false;
+  private lookTouchId: number | null = null;
   private lookLastPos = { x: 0, y: 0 };
   private lookDelta = { x: 0, y: 0 };
+  private lookStartTime = 0;
+  private lookStartPos = { x: 0, y: 0 };
+  private lookHasDragged = false;
 
   private fireDown = false;
+  private fireTapPending = false;
   private jumpJustPressed = false;
   private crouchDown = false;
   private reloadDown = false;
@@ -142,28 +147,17 @@ export class MobileControls {
     `;
     this.container.appendChild(this.lookZoneEl);
 
-    // Right cluster: fire + jump stacked
+    // Right: jump button only (tap in look zone = fire)
     const rightCluster = document.createElement('div');
     rightCluster.style.cssText = `
       position: absolute;
       bottom: 24px;
       right: 20px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
       pointer-events: none;
-    `;
-    this.fireBtn = this.createButton('FIRE', 100, 100);
-    this.fireBtn.style.cssText += `
-      background: rgba(200, 60, 60, 0.6);
-      border-color: #c44;
-      font-size: 14px;
     `;
     this.jumpBtn = this.createButton('JUMP', 72, 48);
     this.jumpBtn.style.cssText += `font-size: 11px;`;
     rightCluster.appendChild(this.jumpBtn);
-    rightCluster.appendChild(this.fireBtn);
     this.container.appendChild(rightCluster);
 
     this.setupMoveStick();
@@ -203,7 +197,12 @@ export class MobileControls {
     const onStart = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
       this.moveStickActive = true;
-      const pos = this.getEventPos(e);
+      const pos = this.getEventPosForTarget(e, this.moveStickEl);
+      if ('touches' in e && e.touches.length > 0) {
+        this.moveStickTouchId = e.targetTouches[0]?.identifier ?? null;
+      } else {
+        this.moveStickTouchId = null;
+      }
       const rect = this.moveStickEl.getBoundingClientRect();
       this.moveStickOrigin = {
         x: rect.left + rect.width / 2,
@@ -213,8 +212,9 @@ export class MobileControls {
     };
     const onMove = (e: TouchEvent | MouseEvent) => {
       if (!this.moveStickActive) return;
+      const pos = this.getEventPosForTarget(e, this.moveStickEl);
+      if (pos === null) return;
       e.preventDefault();
-      const pos = this.getEventPos(e);
       let dx = pos.x - this.moveStickOrigin.x;
       let dy = pos.y - this.moveStickOrigin.y;
       const len = Math.hypot(dx, dy);
@@ -228,8 +228,14 @@ export class MobileControls {
         knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
       }
     };
-    const onEnd = () => {
+    const onEnd = (e?: TouchEvent | MouseEvent) => {
+      if (e && 'changedTouches' in e && this.moveStickTouchId != null) {
+        const ct = (e as TouchEvent).changedTouches;
+        const found = Array.from(ct).some((t) => t.identifier === this.moveStickTouchId);
+        if (!found) return;
+      }
       this.moveStickActive = false;
+      this.moveStickTouchId = null;
       this.moveStickOffset = { x: 0, y: 0 };
       const knob = this.moveStickEl.querySelector('#move-stick-knob');
       if (knob instanceof HTMLElement) {
@@ -237,42 +243,101 @@ export class MobileControls {
       }
     };
     this.moveStickEl.addEventListener('touchstart', onStart, { passive: false });
-    this.moveStickEl.addEventListener('touchmove', onMove, { passive: false });
-    this.moveStickEl.addEventListener('touchend', onEnd);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', (e) => onEnd(e));
+    document.addEventListener('touchcancel', (e) => onEnd(e));
     this.moveStickEl.addEventListener('mousedown', onStart);
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('mouseup', () => onEnd());
   }
 
   private setupLookZone(): void {
+    const TAP_THRESHOLD_PX = 18;
+    const TAP_MAX_MS = 280;
+
     const onStart = (e: TouchEvent | MouseEvent) => {
       e.preventDefault();
+      const pos = this.getEventPosForTarget(e, this.lookZoneEl) ?? this.getEventPos(e);
       this.lookTouchActive = true;
-      const pos = this.getEventPos(e);
-      this.lookLastPos = pos;
+      this.lookTouchId = 'touches' in e && (e as TouchEvent).targetTouches[0]
+        ? (e as TouchEvent).targetTouches[0].identifier
+        : null;
+      this.lookLastPos = { ...pos };
+      this.lookStartPos = { ...pos };
+      this.lookStartTime = performance.now();
+      this.lookHasDragged = false;
       this.lookDelta = { x: 0, y: 0 };
     };
     const onMove = (e: TouchEvent | MouseEvent) => {
       if (!this.lookTouchActive) return;
+      const pos = this.getLookZoneTouchPos(e);
+      if (pos === null) return;
       e.preventDefault();
-      const pos = this.getEventPos(e);
+      const dx = pos.x - this.lookLastPos.x;
+      const dy = pos.y - this.lookLastPos.y;
+      if (Math.hypot(dx, dy) > TAP_THRESHOLD_PX || Math.hypot(pos.x - this.lookStartPos.x, pos.y - this.lookStartPos.y) > TAP_THRESHOLD_PX) {
+        this.lookHasDragged = true;
+      }
       const sens = SensitivitySettings.getMobileSensitivity();
-      this.lookDelta.x += (pos.x - this.lookLastPos.x) * sens;
-      this.lookDelta.y += (pos.y - this.lookLastPos.y) * sens;
+      this.lookDelta.x += dx * sens;
+      this.lookDelta.y += dy * sens;
       this.lookLastPos = pos;
     };
-    const onEnd = () => {
+    const onEnd = (e?: TouchEvent | MouseEvent) => {
+      if (e && 'changedTouches' in e && this.lookTouchId != null) {
+        const ct = (e as TouchEvent).changedTouches;
+        const found = Array.from(ct).some((t) => t.identifier === this.lookTouchId);
+        if (!found) return;
+      }
+      if (!this.lookHasDragged && (performance.now() - this.lookStartTime) < TAP_MAX_MS) {
+        this.fireTapPending = true;
+      }
       this.lookTouchActive = false;
+      this.lookTouchId = null;
     };
     this.lookZoneEl.addEventListener('touchstart', onStart, { passive: false });
-    this.lookZoneEl.addEventListener('touchmove', onMove, { passive: false });
-    this.lookZoneEl.addEventListener('touchend', onEnd);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('touchend', (e) => onEnd(e));
+    document.addEventListener('touchcancel', (e) => onEnd(e));
     this.lookZoneEl.addEventListener('mousedown', onStart);
     document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onEnd);
+    document.addEventListener('mouseup', (e) => onEnd(e));
+  }
+
+  private getLookZoneTouchPos(e: TouchEvent | MouseEvent): { x: number; y: number } | null {
+    if ('touches' in e) {
+      const te = e as TouchEvent;
+      if (this.lookTouchId != null && te.touches.length > 0) {
+        const t = Array.from(te.touches).find((x) => x.identifier === this.lookTouchId);
+        if (t) return { x: t.clientX, y: t.clientY };
+      }
+      if (te.targetTouches.length > 0 && (e.target === this.lookZoneEl || this.lookZoneEl.contains(e.target as Node))) {
+        return { x: te.targetTouches[0].clientX, y: te.targetTouches[0].clientY };
+      }
+      return null;
+    }
+    return { x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY };
+  }
+
+  /** Get position for the touch on our element, or by touch ID for document-level events. */
+  private getEventPosForTarget(e: TouchEvent | MouseEvent, targetEl: HTMLElement): { x: number; y: number } | null {
+    if ('touches' in e && (e as TouchEvent).touches) {
+      const te = e as TouchEvent;
+      if (this.moveStickTouchId != null && te.touches.length > 0) {
+        const t = Array.from(te.touches).find((x) => x.identifier === this.moveStickTouchId);
+        if (t) return { x: t.clientX, y: t.clientY };
+      }
+      if (te.targetTouches.length > 0 && (e.target === targetEl || targetEl.contains(e.target as Node))) {
+        return { x: te.targetTouches[0].clientX, y: te.targetTouches[0].clientY };
+      }
+      return null;
+    }
+    return { x: (e as MouseEvent).clientX, y: (e as MouseEvent).clientY };
   }
 
   private getEventPos(e: TouchEvent | MouseEvent): { x: number; y: number } {
+    const p = this.getEventPosForTarget(e, (e.target as HTMLElement) ?? document.body);
+    if (p) return p;
     if ('touches' in e && e.touches.length > 0) {
       return { x: e.touches[0].clientX, y: e.touches[0].clientY };
     }
@@ -312,7 +377,6 @@ export class MobileControls {
         setDown(false);
       });
     };
-    addTouchBtn(this.fireBtn, 'fireDown');
     addTouchBtn(this.jumpBtn, 'jumpJustPressed', ' ');
     addTouchBtn(this.crouchBtn, 'crouchDown', 'c');
     addTouchBtn(this.reloadBtn, 'reloadDown');
@@ -339,12 +403,15 @@ export class MobileControls {
     const lookY = this.lookDelta.y;
     this.lookDelta = { x: 0, y: 0 };
 
+    const fire = this.fireTapPending || this.fireDown;
+    if (this.fireTapPending) this.fireTapPending = false;
+
     return {
       moveX,
       moveY,
       lookDeltaX: lookX,
       lookDeltaY: lookY,
-      fire: this.fireDown,
+      fire,
       aim: false,
       jump: this.jumpJustPressed,
       crouch: this.crouchDown,
@@ -372,6 +439,7 @@ export class MobileControls {
     this.moveStickOffset = { x: 0, y: 0 };
     this.lookDelta = { x: 0, y: 0 };
     this.fireDown = false;
+    this.fireTapPending = false;
     this.crouchDown = false;
     this.sprintDown = false;
   }

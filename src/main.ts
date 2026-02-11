@@ -21,6 +21,7 @@ import { CCTVBackground } from './ui/cctv-background';
 import { ScreenGlitch } from './ui/screen-glitch';
 import { NetworkManager } from './network/network-manager';
 import { LobbyScreen } from './ui/lobby-screen';
+import { SettingsMenu } from './ui/settings-menu';
 
 async function init(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -84,6 +85,17 @@ async function init(): Promise<void> {
       }
     });
   }
+
+  // Settings: accessible from main menu
+  const settingsMenu = new SettingsMenu();
+  settingsMenu.onBack = () => {
+    settingsMenu.hide();
+    document.getElementById('start-screen')!.style.display = 'flex';
+  };
+  document.getElementById('btn-settings')?.addEventListener('click', () => {
+    document.getElementById('start-screen')!.style.display = 'none';
+    settingsMenu.show();
+  });
 
   // Multiplayer: show lobby first, then connect
   const lobbyScreen = new LobbyScreen();

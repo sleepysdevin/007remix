@@ -2,14 +2,30 @@
  * Procedural sound effects using Web Audio API.
  * No audio files needed — generates gunshot, reload, etc. from noise and oscillators.
  */
+import { GameSettings } from '../core/game-settings';
 
 let audioCtx: AudioContext | null = null;
+let sfxGain: GainNode | null = null;
 
 function getAudioCtx(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
   }
   return audioCtx;
+}
+
+function getSFXDest(): AudioNode {
+  const ctx = getAudioCtx();
+  if (!sfxGain) {
+    sfxGain = ctx.createGain();
+    sfxGain.gain.value = GameSettings.getVolumeMaster() * GameSettings.getVolumeSFX();
+    sfxGain.connect(ctx.destination);
+  }
+  return sfxGain;
+}
+
+export function setSFXVolume(vol: number): void {
+  if (sfxGain) sfxGain.gain.value = Math.max(0, Math.min(1, vol));
 }
 
 export type WeaponSoundType = 'pistol' | 'rifle' | 'shotgun' | 'sniper';
@@ -57,7 +73,7 @@ export function playGunshotPistol(): void {
   g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
   noise.connect(hp);
   hp.connect(g);
-  g.connect(ctx.destination);
+  g.connect(getSFXDest());
   noise.start(now);
   noise.stop(now + 0.06);
 
@@ -69,7 +85,7 @@ export function playGunshotPistol(): void {
   cg.gain.setValueAtTime(0.12, now);
   cg.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
   click.connect(cg);
-  cg.connect(ctx.destination);
+  cg.connect(getSFXDest());
   click.start(now);
   click.stop(now + 0.03);
 
@@ -81,7 +97,7 @@ export function playGunshotPistol(): void {
   bg.gain.setValueAtTime(0.2, now);
   bg.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
   bass.connect(bg);
-  bg.connect(ctx.destination);
+  bg.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.06);
 }
@@ -102,7 +118,7 @@ export function playGunshotRifle(): void {
   crackG.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
   crack.connect(crackHp);
   crackHp.connect(crackG);
-  crackG.connect(ctx.destination);
+  crackG.connect(getSFXDest());
   crack.start(now);
   crack.stop(now + 0.025);
 
@@ -120,7 +136,7 @@ export function playGunshotRifle(): void {
   body.connect(bodyBp);
   bodyBp.connect(bodyDist);
   bodyDist.connect(bodyG);
-  bodyG.connect(ctx.destination);
+  bodyG.connect(getSFXDest());
   body.start(now);
   body.stop(now + 0.1);
 
@@ -132,7 +148,7 @@ export function playGunshotRifle(): void {
   bassG.gain.setValueAtTime(0.35, now);
   bassG.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
   bass.connect(bassG);
-  bassG.connect(ctx.destination);
+  bassG.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.09);
 
@@ -149,7 +165,7 @@ export function playGunshotRifle(): void {
   boltG.gain.exponentialRampToValueAtTime(0.001, now + 0.055);
   bolt.connect(boltBp);
   boltBp.connect(boltG);
-  boltG.connect(ctx.destination);
+  boltG.connect(getSFXDest());
   bolt.start(now + 0.02);
   bolt.stop(now + 0.06);
 
@@ -161,7 +177,7 @@ export function playGunshotRifle(): void {
   subG.gain.setValueAtTime(0.2, now);
   subG.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
   sub.connect(subG);
-  subG.connect(ctx.destination);
+  subG.connect(getSFXDest());
   sub.start(now);
   sub.stop(now + 0.07);
 }
@@ -184,7 +200,7 @@ export function playGunshotShotgun(): void {
   noise.connect(lp);
   lp.connect(dist);
   dist.connect(g);
-  g.connect(ctx.destination);
+  g.connect(getSFXDest());
   noise.start(now);
   noise.stop(now + 0.25);
 
@@ -196,7 +212,7 @@ export function playGunshotShotgun(): void {
   bg.gain.setValueAtTime(0.6, now);
   bg.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
   bass.connect(bg);
-  bg.connect(ctx.destination);
+  bg.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.2);
 
@@ -208,7 +224,7 @@ export function playGunshotShotgun(): void {
   sg.gain.setValueAtTime(0.35, now);
   sg.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   sub.connect(sg);
-  sg.connect(ctx.destination);
+  sg.connect(getSFXDest());
   sub.start(now);
   sub.stop(now + 0.18);
 
@@ -222,7 +238,7 @@ export function playGunshotShotgun(): void {
   cg.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
   crack.connect(hp);
   hp.connect(cg);
-  cg.connect(ctx.destination);
+  cg.connect(getSFXDest());
   crack.start(now);
   crack.stop(now + 0.04);
 }
@@ -243,7 +259,7 @@ export function playGunshotSniper(): void {
   crackG.gain.exponentialRampToValueAtTime(0.001, now + 0.02);
   crack.connect(crackHp);
   crackHp.connect(crackG);
-  crackG.connect(ctx.destination);
+  crackG.connect(getSFXDest());
   crack.start(now);
   crack.stop(now + 0.02);
 
@@ -260,7 +276,7 @@ export function playGunshotSniper(): void {
   body.connect(bodyLp);
   bodyLp.connect(bodyDist);
   bodyDist.connect(bodyG);
-  bodyG.connect(ctx.destination);
+  bodyG.connect(getSFXDest());
   body.start(now);
   body.stop(now + 0.18);
 
@@ -272,7 +288,7 @@ export function playGunshotSniper(): void {
   bassG.gain.setValueAtTime(0.6, now);
   bassG.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
   bass.connect(bassG);
-  bassG.connect(ctx.destination);
+  bassG.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.2);
 
@@ -284,7 +300,7 @@ export function playGunshotSniper(): void {
   subG.gain.setValueAtTime(0.45, now);
   subG.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   sub.connect(subG);
-  subG.connect(ctx.destination);
+  subG.connect(getSFXDest());
   sub.start(now);
   sub.stop(now + 0.18);
 
@@ -298,7 +314,7 @@ export function playGunshotSniper(): void {
   ringG.gain.setValueAtTime(0.08, now + 0.01);
   ringG.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
   ring.connect(ringG);
-  ringG.connect(ctx.destination);
+  ringG.connect(getSFXDest());
   ring.start(now + 0.01);
   ring.stop(now + 0.22);
 
@@ -315,7 +331,7 @@ export function playGunshotSniper(): void {
   echo1G.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
   echo1.connect(echo1Bp);
   echo1Bp.connect(echo1G);
-  echo1G.connect(ctx.destination);
+  echo1G.connect(getSFXDest());
   echo1.start(now + 0.08);
   echo1.stop(now + 0.25);
 
@@ -331,7 +347,7 @@ export function playGunshotSniper(): void {
   echo2G.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
   echo2.connect(echo2Lp);
   echo2Lp.connect(echo2G);
-  echo2G.connect(ctx.destination);
+  echo2G.connect(getSFXDest());
   echo2.start(now + 0.18);
   echo2.stop(now + 0.42);
 
@@ -344,7 +360,7 @@ export function playGunshotSniper(): void {
   boltG.gain.setValueAtTime(0.12, now + 0.12);
   boltG.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
   bolt.connect(boltG);
-  boltG.connect(ctx.destination);
+  boltG.connect(getSFXDest());
   bolt.start(now + 0.12);
   bolt.stop(now + 0.18);
 }
@@ -376,7 +392,7 @@ export function playDryFire(): void {
   gain.gain.setValueAtTime(0.15, now);
   gain.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
   osc.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(getSFXDest());
   osc.start(now);
   osc.stop(now + 0.05);
 }
@@ -399,7 +415,7 @@ export function playCrateBreak(): void {
   crackG.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
   crack.connect(crackHp);
   crackHp.connect(crackG);
-  crackG.connect(ctx.destination);
+  crackG.connect(getSFXDest());
   crack.start(now);
   crack.stop(now + 0.06);
 
@@ -417,7 +433,7 @@ export function playCrateBreak(): void {
   crunch.connect(crunchBp);
   crunchBp.connect(crunchDist);
   crunchDist.connect(crunchG);
-  crunchG.connect(ctx.destination);
+  crunchG.connect(getSFXDest());
   crunch.start(now);
   crunch.stop(now + 0.12);
 
@@ -430,7 +446,7 @@ export function playCrateBreak(): void {
   thumpG.gain.setValueAtTime(0.2, now + 0.02);
   thumpG.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
   thump.connect(thumpG);
-  thumpG.connect(ctx.destination);
+  thumpG.connect(getSFXDest());
   thump.start(now + 0.02);
   thump.stop(now + 0.12);
 
@@ -447,7 +463,7 @@ export function playCrateBreak(): void {
   rattleG.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
   rattle.connect(rattleBp);
   rattleBp.connect(rattleG);
-  rattleG.connect(ctx.destination);
+  rattleG.connect(getSFXDest());
   rattle.start(now + 0.04);
   rattle.stop(now + 0.18);
 }
@@ -468,7 +484,7 @@ export function playMetalCrateBreak(): void {
   impactG.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
   impact.connect(impactHp);
   impactHp.connect(impactG);
-  impactG.connect(ctx.destination);
+  impactG.connect(getSFXDest());
   impact.start(now);
   impact.stop(now + 0.04);
 
@@ -486,7 +502,7 @@ export function playMetalCrateBreak(): void {
   crash.connect(crashBp);
   crashBp.connect(crashDist);
   crashDist.connect(crashG);
-  crashG.connect(ctx.destination);
+  crashG.connect(getSFXDest());
   crash.start(now);
   crash.stop(now + 0.15);
 
@@ -499,7 +515,7 @@ export function playMetalCrateBreak(): void {
   ringG.gain.setValueAtTime(0.1, now);
   ringG.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
   ring.connect(ringG);
-  ringG.connect(ctx.destination);
+  ringG.connect(getSFXDest());
   ring.start(now);
   ring.stop(now + 0.32);
 
@@ -511,7 +527,7 @@ export function playMetalCrateBreak(): void {
   bassG.gain.setValueAtTime(0.3, now);
   bassG.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
   bass.connect(bassG);
-  bassG.connect(ctx.destination);
+  bassG.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.12);
 }
@@ -532,7 +548,7 @@ export function playBarrelExplode(): void {
   burstG.gain.exponentialRampToValueAtTime(0.001, now + 0.04);
   burst.connect(burstHp);
   burstHp.connect(burstG);
-  burstG.connect(ctx.destination);
+  burstG.connect(getSFXDest());
   burst.start(now);
   burst.stop(now + 0.05);
 
@@ -549,7 +565,7 @@ export function playBarrelExplode(): void {
   boom.connect(boomLp);
   boomLp.connect(boomDist);
   boomDist.connect(boomG);
-  boomG.connect(ctx.destination);
+  boomG.connect(getSFXDest());
   boom.start(now);
   boom.stop(now + 0.2);
 
@@ -561,7 +577,7 @@ export function playBarrelExplode(): void {
   bassG.gain.setValueAtTime(0.5, now);
   bassG.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   bass.connect(bassG);
-  bassG.connect(ctx.destination);
+  bassG.connect(getSFXDest());
   bass.start(now);
   bass.stop(now + 0.18);
 
@@ -573,7 +589,7 @@ export function playBarrelExplode(): void {
   subG.gain.setValueAtTime(0.35, now);
   subG.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
   sub.connect(subG);
-  subG.connect(ctx.destination);
+  subG.connect(getSFXDest());
   sub.start(now);
   sub.stop(now + 0.15);
 
@@ -590,7 +606,7 @@ export function playBarrelExplode(): void {
   crackleG.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
   crackle.connect(crackleBp);
   crackleBp.connect(crackleG);
-  crackleG.connect(ctx.destination);
+  crackleG.connect(getSFXDest());
   crackle.start(now + 0.05);
   crackle.stop(now + 0.35);
 }
@@ -618,7 +634,7 @@ export function playReload(): void {
   g1.gain.setValueAtTime(0.2, now + 0.1);
   g1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
   click1.connect(g1);
-  g1.connect(ctx.destination);
+  g1.connect(getSFXDest());
   click1.start(now);
   click1.stop(now + 0.2);
 
@@ -631,7 +647,7 @@ export function playReload(): void {
   g2.gain.setValueAtTime(0.25, now + 0.7);
   g2.gain.exponentialRampToValueAtTime(0.001, now + 0.78);
   click2.connect(g2);
-  g2.connect(ctx.destination);
+  g2.connect(getSFXDest());
   click2.start(now);
   click2.stop(now + 0.8);
 
@@ -653,7 +669,7 @@ export function playReload(): void {
   g3.gain.exponentialRampToValueAtTime(0.001, now + 1.0);
   slide.connect(filter);
   filter.connect(g3);
-  g3.connect(ctx.destination);
+  g3.connect(getSFXDest());
   slide.start(now + 0.95);
   slide.stop(now + 1.05);
 }
@@ -717,7 +733,7 @@ export function playPositionalGunshot(
   noise.connect(hp);
   hp.connect(crack);
   crack.connect(panner);
-  panner.connect(ctx.destination);
+  panner.connect(getSFXDest());
   noise.start(now);
   noise.stop(now + 0.06);
 

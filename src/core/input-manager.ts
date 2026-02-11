@@ -1,4 +1,5 @@
 import { SensitivitySettings } from './sensitivity-settings';
+import { GameSettings } from './game-settings';
 
 /** Virtual input state from mobile touch controls. */
 export interface MobileInputState {
@@ -33,10 +34,11 @@ export class InputManager {
   private _scrollDelta = 0;
   private keyJustPressed = new Set<string>();
 
-  /** Stick deadzone */
-  private static readonly DEADZONE = 0.2;
   /** Previous gamepad button state for "just pressed" */
   private prevGamepadButtons: boolean[] = [];
+  /** Smoothed look velocity for gamepad (persists across frames) */
+  private gamepadLookVelX = 0;
+  private gamepadLookVelY = 0;
   private prevGamepadAxes: number[] = [];
 
   /** Optional mobile input provider (touch controls) */
@@ -150,24 +152,32 @@ export class InputManager {
     const pad = gp?.[0] ?? null;
 
     if (pad?.connected) {
+      const dzL = GameSettings.getDeadzoneLeft();
+      const dzR = GameSettings.getDeadzoneRight();
       // Left stick → WASD (axes[1]: neg = up/forward, pos = down/back)
-      const lx = this.applyDeadzone(pad.axes[0]);
-      const ly = this.applyDeadzone(pad.axes[1]);
-      if (ly < -InputManager.DEADZONE) this.keys.add('w');
+      const lx = this.applyDeadzone(pad.axes[0], dzL);
+      const ly = this.applyDeadzone(pad.axes[1], dzL);
+      if (ly < -dzL) this.keys.add('w');
       else this.keys.delete('w');
-      if (ly > InputManager.DEADZONE) this.keys.add('s');
+      if (ly > dzL) this.keys.add('s');
       else this.keys.delete('s');
-      if (lx < -InputManager.DEADZONE) this.keys.add('a');
+      if (lx < -dzL) this.keys.add('a');
       else this.keys.delete('a');
-      if (lx > InputManager.DEADZONE) this.keys.add('d');
+      if (lx > dzL) this.keys.add('d');
       else this.keys.delete('d');
 
-      // Right stick → look (axes[3] sign varies by controller; negate to fix inverted Y)
-      const rx = this.applyDeadzone(pad.axes[2]);
-      const ry = this.applyDeadzone(pad.axes[3]);
+      // Right stick → look (response curve + smoothing)
+      const rx = this.applyResponseCurve(this.applyDeadzone(pad.axes[2], dzR));
+      const ry = this.applyResponseCurve(this.applyDeadzone(pad.axes[3], dzR));
       const sens = SensitivitySettings.getGamepadSensitivity();
-      this.mouseX += rx * sens * dt * 60;
-      this.mouseY += ry * sens * dt * 60;
+      const smooth = GameSettings.getGamepadSmoothing();
+      const yScale = GameSettings.getGamepadLookYScale();
+      const rawX = rx * sens * dt * 60;
+      const rawY = ry * sens * dt * 60 * yScale;
+      this.gamepadLookVelX += (rawX - this.gamepadLookVelX) * (1 - smooth * 0.9);
+      this.gamepadLookVelY += (rawY - this.gamepadLookVelY) * (1 - smooth * 0.9);
+      this.mouseX += this.gamepadLookVelX;
+      this.mouseY += this.gamepadLookVelY;
 
       // Triggers: handled in mouseDown/rightMouseDown getters
 
@@ -204,6 +214,8 @@ export class InputManager {
       }
     } else {
       this.prevGamepadButtons = [];
+      this.gamepadLookVelX = 0;
+      this.gamepadLookVelY = 0;
     }
 
     // Merge mobile input (look delta + just-pressed keys)
@@ -217,10 +229,34 @@ export class InputManager {
     }
   }
 
-  private applyDeadzone(v: number): number {
+  private applyDeadzone(v: number, deadzone: number): number {
     const a = Math.abs(v);
-    if (a < InputManager.DEADZONE) return 0;
-    return Math.sign(v) * ((a - InputManager.DEADZONE) / (1 - InputManager.DEADZONE));
+    if (a < deadzone) return 0;
+    return Math.sign(v) * ((a - deadzone) / (1 - deadzone));
+  }
+
+  private applyResponseCurve(v: number): number {
+    if (v === 0) return 0;
+    const curve = GameSettings.getGamepadResponseCurve();
+    const a = Math.abs(v);
+    let out: number;
+    switch (curve) {
+      case 'linear':
+        out = a;
+        break;
+      case 'exponential':
+        out = Math.pow(a, 1.8);
+        break;
+      case 'precision':
+        out = Math.pow(a, 0.6);
+        break;
+      case 'classic':
+        out = 0.35 * a + 0.65 * a * a;
+        break;
+      default:
+        out = a;
+    }
+    return Math.sign(v) * Math.min(1, out);
   }
 
   /** Call at end of each frame to reset per-frame deltas */

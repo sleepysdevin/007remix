@@ -1,14 +1,9 @@
 /**
  * Procedural spy-thriller background music — 007-inspired.
  * Fully procedural, no audio files — all Web Audio API oscillators and noise.
- *
  * 5.6 second loop at 173 BPM, 4 bars of 4/4
- * • Bass: Filtered triangle + sub-octave sine walking chromatically (B→C→C♯→C→B)
- * • Percussion: Kick on 1 & 3, reverb-drenched snare on 2 & 4, swung 8th-note hi-hats
- * • Mallet riff: FM triangle carrier + sine modulator, sneaky descending melody
- * • String pad: Detuned sawtooth ensemble Em(add9)→C(add♯11)→C♯dim, LP-filtered
- * • Echo stabs: Bandpassed white noise bursts on transitions — punchy, trap-esque
  */
+import { GameSettings } from '../core/game-settings';
 
 let ctx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
@@ -44,7 +39,7 @@ function getCtx(): AudioContext {
   if (!ctx) {
     ctx = new AudioContext();
     masterGain = ctx.createGain();
-    masterGain.gain.value = 0.2;
+    masterGain.gain.value = GameSettings.getVolumeMaster() * GameSettings.getVolumeMusic();
     masterGain.connect(ctx.destination);
   }
   return ctx;

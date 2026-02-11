@@ -207,6 +207,33 @@ export class EnemyManager {
     this.muzzleFlashTimers[idx] = 0.06;
   }
 
+  /** Find best aim-assist target in forward cone. Returns target pos and angle off crosshair, or null. */
+  getBestAimAssistTarget(
+    cameraPos: THREE.Vector3,
+    lookDir: THREE.Vector3,
+    maxAngleRad: number,
+    maxDist: number,
+  ): { target: THREE.Vector3; angleOff: number; dist: number } | null {
+    const toTarget = new THREE.Vector3();
+    let best: { target: THREE.Vector3; angleOff: number; dist: number } | null = null;
+
+    for (const enemy of this.enemies) {
+      if (enemy.dead) continue;
+      const aimPoint = enemy.getHeadPosition();
+      toTarget.subVectors(aimPoint, cameraPos);
+      const dist = toTarget.length();
+      if (dist > maxDist || dist < 0.5) continue;
+      toTarget.divideScalar(dist);
+      const dot = lookDir.dot(toTarget);
+      const angleOff = Math.acos(Math.max(-1, Math.min(1, dot)));
+      if (angleOff > maxAngleRad) continue;
+      if (!best || angleOff < best.angleOff) {
+        best = { target: aimPoint, angleOff, dist };
+      }
+    }
+    return best;
+  }
+
   /** Check if a Rapier collider belongs to an enemy, and if so return that enemy */
   getEnemyByCollider(collider: RAPIER.Collider): EnemyBase | null {
     for (const enemy of this.enemies) {
