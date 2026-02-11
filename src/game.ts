@@ -36,6 +36,7 @@ import { ObjectivesDisplay } from './ui/objectives-display';
 import { InventoryScreen } from './ui/inventory-screen';
 import { PauseMenu } from './ui/pause-menu';
 import { MissionCompleteScreen } from './ui/mission-complete-screen';
+import { MobileControls } from './ui/mobile-controls';
 import { renderWeaponPreviewToCanvas } from './weapons/weapon-preview-renderer';
 import {
   concreteWallTexture,
@@ -110,6 +111,7 @@ export class Game {
   private flashlightOn = false;
   private pauseMenu: PauseMenu;
   private missionCompleteScreen: MissionCompleteScreen;
+  private mobileControls: MobileControls | null = null;
   private paused = false;
 
   private physicsAccumulator = 0;
@@ -362,6 +364,12 @@ export class Game {
     this.missionCompleteScreen.onExit = () => {
       this.exitToMenu();
     };
+
+    // Mobile touch controls (when supported)
+    if (MobileControls.isSupported()) {
+      this.mobileControls = new MobileControls();
+      this.input.setMobileInputProvider(() => this.mobileControls?.getState() ?? null);
+    }
 
     if (this.levelMode) {
       this.doorSystem = new DoorSystem(
@@ -670,7 +678,10 @@ export class Game {
   start(): void {
     if (this.started) return;
     this.started = true;
-    this.input.requestPointerLock();
+    if (!MobileControls.isSupported()) {
+      this.input.requestPointerLock();
+    }
+    this.mobileControls?.show();
     document.getElementById('start-screen')!.style.display = 'none';
     this.hud.show();
     if (this.networkMode === 'client') this.hud.setMultiplayerHint(true);
@@ -683,13 +694,17 @@ export class Game {
   private pauseGame(): void {
     this.paused = true;
     document.exitPointerLock();
+    this.mobileControls?.hide();
     this.pauseMenu.show();
   }
 
   private resumeGame(): void {
     this.paused = false;
     this.pauseMenu.hide();
-    this.input.requestPointerLock();
+    if (!MobileControls.isSupported()) {
+      this.input.requestPointerLock();
+    }
+    this.mobileControls?.show();
     this.input.resetMouse();
   }
 
@@ -775,6 +790,9 @@ export class Game {
   }
 
   private tick(dt: number): void {
+    // Poll gamepad and merge mobile input
+    this.input.update(dt);
+
     // Pause toggle (Escape)
     if (this.input.wasKeyJustPressed('escape')) {
       if (this.pauseMenu.isOpen) {
@@ -799,12 +817,16 @@ export class Game {
       if (this.input.isKeyDown('q')) {
         if (!this.scoreboard.visible) {
           document.exitPointerLock();
+          this.mobileControls?.hide();
           this.scoreboard.show();
         }
       } else {
         if (this.scoreboard.visible) {
           this.scoreboard.hide();
-          if (this.started) this.input.requestPointerLock();
+          if (this.started) {
+            this.input.requestPointerLock();
+            this.mobileControls?.show();
+          }
         }
       }
     }
@@ -814,10 +836,14 @@ export class Game {
     if (this.input.wasKeyJustPressed(inventoryKey)) {
       if (this.inventoryScreen.isOpen) {
         this.inventoryScreen.hide();
-        if (this.started) this.input.requestPointerLock();
+        if (this.started) {
+          this.input.requestPointerLock();
+          this.mobileControls?.show();
+        }
         this.input.resetMouse(); // So same key doesn't reopen next frame
       } else {
         document.exitPointerLock();
+        this.mobileControls?.hide();
         this.inventoryScreen.show(
           {
             weapons: this.weaponManager.getOwnedWeapons(),
@@ -832,7 +858,10 @@ export class Game {
           },
           () => {
             this.inventoryScreen.hide();
-            if (this.started) this.input.requestPointerLock();
+            if (this.started) {
+              this.input.requestPointerLock();
+              this.mobileControls?.show();
+            }
           },
           (type, skin, rotationY, canvas) => {
             const key = `${type}:${skin}`;
