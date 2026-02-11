@@ -1,6 +1,6 @@
 import { createServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
-import { GameRoom } from './game-room';
+import { GameRoom } from './game-room.js';
 
 /**
  * Port to run the server on.
