@@ -13,6 +13,8 @@ import type { LoadedCharacter } from '../../core/model-loader';
 import type { VRM } from '@pixiv/three-vrm';
 import { isLoadedVRM } from '../../core/model-loader';
 import { solveTwoBoneIK } from '../../core/two-bone-ik';
+import { Ragdoll, buildRagdollBoneMapping, type RagdollBoneMapping } from '../ragdoll';
+import type { PhysicsWorld } from '../../core/physics-world';
 
 const TARGET_HEIGHT = 1.7;
 /** How far to sink the model (meters) during death — pose JSON has no position data */
@@ -140,6 +142,9 @@ function applyFootIK(mesh: THREE.Object3D, ik: FootIKParams, floorY: number): vo
   }
 }
 
+/** Called each frame with pelvis world position and rotation when ragdoll is active */
+export type RagdollPelvisCallback = (pos: THREE.Vector3, quat: THREE.Quaternion) => void;
+
 export class EnemyCustomModel {
   readonly mesh: THREE.Group;
   readonly shadowMesh: THREE.Mesh;
@@ -151,6 +156,9 @@ export class EnemyCustomModel {
   private currentAction: THREE.AnimationAction | null = null;
   private vrmCopyParams: VRMCopyParams | null = null;
   private footIKParams: FootIKParams | null = null;
+  private ragdollMapping: RagdollBoneMapping[] = [];
+  private ragdoll: Ragdoll | null = null;
+  private ragdollPelvisCallback: RagdollPelvisCallback | null = null;
   private meshBaseY = 0;
 
   constructor(char: LoadedCharacter) {
@@ -158,6 +166,7 @@ export class EnemyCustomModel {
     if (isLoadedVRM(char)) {
       this.vrmCopyParams = buildVRMCopyParams(char.vrm);
       this.footIKParams = buildFootIKParams(char.vrm);
+      this.ragdollMapping = buildRagdollBoneMapping(char.vrm);
     }
     try {
       this.mesh = cloneSkinned(scene) as THREE.Group;
@@ -223,8 +232,36 @@ export class EnemyCustomModel {
     this.shadowMesh.position.y = 0.02;
   }
 
+  /** Activate ragdoll physics for death. Replaces death animation. Only for VRM with full rig. */
+  activateRagdoll(physics: PhysicsWorld, onPelvisUpdate: RagdollPelvisCallback): boolean {
+    if (this.ragdollMapping.length < 6) return false;
+    this.ragdoll?.dispose();
+    this.ragdoll = new Ragdoll(physics, this.ragdollMapping);
+    this.ragdoll.activate(this.mesh);
+    this.ragdollPelvisCallback = onPelvisUpdate;
+    return true;
+  }
+
+  /** Clean up ragdoll when enemy is removed */
+  disposeRagdoll(): void {
+    this.ragdoll?.dispose();
+    this.ragdoll = null;
+    this.ragdollPelvisCallback = null;
+  }
+
+  get isRagdollActive(): boolean {
+    return this.ragdoll !== null;
+  }
+
   update(dt: number): void {
-    if (this.mixer) {
+    if (this.ragdoll) {
+      const _p = new THREE.Vector3();
+      const _q = new THREE.Quaternion();
+      this.ragdoll.getPelvisPosition(_p);
+      this.ragdoll.getPelvisQuaternion(_q);
+      this.ragdollPelvisCallback?.(_p, _q);
+      this.ragdoll.syncToSkeleton(this.mesh);
+    } else if (this.mixer) {
       this.mixer.update(dt);
       if (this.vrmCopyParams) {
         const clipName = this.currentAction?.getClip().name?.toLowerCase() ?? '';

@@ -28,6 +28,7 @@ export class EnemyBase {
   readonly rigidBody: RAPIER.RigidBody;
   readonly collider: RAPIER.Collider;
   readonly stateMachine: StateMachine<EnemyBase>;
+  readonly physics: PhysicsWorld;
 
   health = 100;
   maxHealth = 100;
@@ -64,6 +65,7 @@ export class EnemyBase {
     this.targetFacingAngle = facingAngle;
 
     // Visual mesh group — rotation.y controls facing (3D models rotate with parent)
+    this.physics = physics;
     this.group = new THREE.Group();
     this.group.position.set(x, y, z);
     this.group.rotation.y = facingAngle;
@@ -160,7 +162,16 @@ export class EnemyBase {
   private die(): void {
     this.dead = true;
     this.deathTimer = 0;
-    this.model.play('death');
+    const customModel = this.model as EnemyCustomModel;
+    if ('activateRagdoll' in customModel && typeof customModel.activateRagdoll === 'function') {
+      const activated = customModel.activateRagdoll(this.physics, (pos, quat) => {
+        this.group.position.copy(pos);
+        this.group.quaternion.copy(quat);
+      });
+      if (!activated) customModel.play('death');
+    } else {
+      this.model.play('death');
+    }
   }
 
   /** Update death animation and hit flash */

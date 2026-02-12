@@ -321,8 +321,10 @@ export class EnemyManager {
       // Remove dead enemies after delay
       if (enemy.dead) {
         if (enemy.deathTimer > DEAD_REMOVAL_TIME) {
+          if ('disposeRagdoll' in enemy.model && typeof enemy.model.disposeRagdoll === 'function') {
+            enemy.model.disposeRagdoll();
+          }
           this.scene.remove(enemy.group);
-          // Note: we leave the physics body for now (it sinks below floor)
           this.enemies.splice(i, 1);
         }
       }
