@@ -22,6 +22,7 @@ import { ScreenGlitch } from './ui/screen-glitch';
 import { NetworkManager } from './network/network-manager';
 import { LobbyScreen } from './ui/lobby-screen';
 import { SettingsMenu } from './ui/settings-menu';
+import { CharacterModelsScreen } from './ui/character-models-screen';
 import { setEnemyRenderConfig, ENEMY_RENDER_CONFIG } from './enemies/enemy-render-config';
 import { preloadEnemySpriteSheet } from './enemies/sprite/guard-sprite-sheet';
 import { preloadCustomEnemyModel, preloadCustomPlayerModel, loadAndCacheEnemyModelFromBuffer, loadCharacterModelFromBuffer, setCachedPlayerModel, setCachedCharacterModel } from './core/model-loader';
@@ -187,6 +188,18 @@ async function init(): Promise<void> {
       }
     });
   }
+
+  // Custom Models: accessible from main menu
+  const characterModelsScreen = new CharacterModelsScreen();
+  characterModelsScreen.onBack = () => {
+    characterModelsScreen.hide();
+    setRenderMode(getRenderMode()); // Re-sync so uploaded-model doesn't override 2D/3D choice
+    document.getElementById('start-screen')!.style.display = 'flex';
+  };
+  document.getElementById('btn-models')?.addEventListener('click', () => {
+    document.getElementById('start-screen')!.style.display = 'none';
+    characterModelsScreen.show();
+  });
 
   // Settings: accessible from main menu
   const settingsMenu = new SettingsMenu();

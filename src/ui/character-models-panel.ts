@@ -194,7 +194,7 @@ export function createCharacterModelsPanel(onModelsChanged: () => void): HTMLDiv
 
   const desc = document.createElement('p');
   desc.style.cssText = 'font-size: 11px; color: rgba(255,255,255,0.6); margin-bottom: 16px; line-height: 1.4;';
-  desc.textContent = 'Drag and drop or click to upload. Used when 3D render mode is selected. Omit to use default guard/player models.';
+  desc.textContent = 'Drag and drop or click to upload. Works in 2D and 3D modes. Omit to use default guard/player models.';
   section.appendChild(desc);
 
   section.appendChild(createDropZone('ENEMIES', 'enemy', onModelsChanged));
