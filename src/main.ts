@@ -38,6 +38,7 @@ import {
   loadPersistedPlayerModel,
   loadPersistedCharacterModel,
 } from './core/persisted-models';
+import { setupAppKit } from './appkit';
 
 const STORAGE_RENDER_MODE = '007remix_enemy_render_mode';
 
@@ -208,6 +209,7 @@ async function init(): Promise<void> {
     activateGame(game);
     document.getElementById('start-screen')!.style.display = 'none';
     hideCCTVBackground();
+    await setupAppKit();
     game.start();
   });
 

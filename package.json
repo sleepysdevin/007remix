@@ -19,6 +19,8 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
     "@pixiv/three-vrm": "^3.4.5",
+    "@reown/appkit": "^1.8.18",
+    "@reown/appkit-adapter-solana": "^1.8.18",
     "express": "^4.21.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",

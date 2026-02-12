@@ -170,6 +170,33 @@
       background: #d4af37;
       color: #000;
     }
+    #wallet-connect-container {
+      position: fixed;
+      top: 12px;
+      right: 18px;
+      z-index: 9999;
+      display: inline-flex;
+      gap: 6px;
+      pointer-events: auto;
+    }
+    appkit-button {
+      --w3m-button-background-color: #1a1a1a;
+      --w3m-button-color: #f5f5f5;
+      --w3m-button-hover-background-color: #272727;
+      --w3m-button-hover-color: #fff;
+      --w3m-button-border-color: rgba(212, 175, 55, 0.9);
+      --w3m-button-shadow-color: rgba(0, 0, 0, 0.85);
+      --w3m-button-radius: 0;
+      --w3m-button-padding: 0.4rem 1.4rem;
+      font-family: 'Courier New', monospace;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    appkit-button::part(base) {
+      border-radius: 0;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(212, 175, 55, 0.6);
+    }
     #mission-complete {
       position: absolute;
       top: 0; left: 0;
@@ -279,8 +306,12 @@
     }
   </style>
 </head>
-<body>
-  <canvas id="game-canvas"></canvas>
+  <body>
+    <canvas id="game-canvas"></canvas>
+
+    <div id="wallet-connect-container">
+      <appkit-button namespace="solana" balance="show" size="md"></appkit-button>
+    </div>
 
   <div id="hud" style="display: none;">
     <div id="crosshair">+</div>
