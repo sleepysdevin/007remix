@@ -39,6 +39,8 @@ import {
   loadPersistedCharacterModel,
 } from './core/persisted-models';
 import { setupAppKit } from './appkit';
+import { store as appKitStore, cacheProvider, cacheWalletInfo, updateStore } from './appkit-store';
+import { fetchNfts } from './nft-service';
 
 const STORAGE_RENDER_MODE = '007remix_enemy_render_mode';
 
@@ -167,6 +169,23 @@ async function init(): Promise<void> {
     applyRenderModeUI('3d');
   });
 
+  const appKitPromise = setupAppKit();
+  appKitPromise
+    .then(async (modal) => {
+      const info = await modal.getWalletInfo('solana');
+      cacheWalletInfo(info ?? null);
+      modal.subscribeWalletInfo((next) => cacheWalletInfo(next ?? null), 'solana');
+      modal.subscribeProviders((state) => {
+        if (state?.solana) cacheProvider(state.solana);
+      });
+      modal.subscribeAccount((account) => updateStore('accountState', account));
+      modal.subscribeNetwork((network) => updateStore('networkState', network));
+      modal.subscribeState((state) => updateStore('appKitState', state));
+    })
+    .catch((err) => {
+      console.error('AppKit init failed', err);
+    });
+
   // Create CCTV background for main menu
   const cctvPhysics = await PhysicsWorld.create();
   const cctvBackground = new CCTVBackground(cctvPhysics);
@@ -201,6 +220,88 @@ async function init(): Promise<void> {
     // Hide game canvas
     canvas.style.display = 'none';
   };
+
+  const nftButton = document.getElementById('btn-nft-gallery') as HTMLButtonElement | null;
+  const nftModal = document.getElementById('nft-modal') as HTMLDivElement | null;
+  const nftGrid = document.getElementById('nft-grid') as HTMLDivElement | null;
+  const nftStatus = document.getElementById('nft-status') as HTMLElement | null;
+  const nftClose = document.getElementById('nft-modal-close') as HTMLButtonElement | null;
+
+  const renderNfts = (assets: Array<{
+    name?: string;
+    description?: string;
+    symbol?: string;
+    img?: string;
+    image?: string;
+    imageUrl?: string;
+    content?: { metadata?: { name?: string; description?: string; symbol?: string }; json_uri?: string };
+    interface?: string;
+  }>) => {
+    if (!nftGrid) return;
+    nftGrid.replaceChildren();
+    assets.slice(0, 12).forEach((asset) => {
+      const card = document.createElement('div');
+      card.className = 'nft-card';
+      const img = document.createElement('img');
+      img.className = 'nft-card-image';
+      const imageSrc =
+        asset.content?.json_uri || asset.imageUrl || asset.img || asset.image || '/placeholder.png';
+      img.src = imageSrc;
+      img.alt = asset.name ?? asset.content?.metadata?.name ?? 'NFT';
+      const title = document.createElement('div');
+      title.className = 'nft-card-title';
+      title.textContent = asset.name ?? asset.content?.metadata?.name ?? 'Unknown NFT';
+      const desc = document.createElement('div');
+      desc.className = 'nft-card-description';
+      desc.textContent =
+        asset.description ?? asset.content?.metadata?.description ?? 'No description available.';
+      const meta = document.createElement('div');
+      meta.className = 'nft-card-description';
+      meta.textContent =
+        asset.symbol ?? asset.content?.metadata?.symbol ?? asset.interface ?? 'No symbol';
+
+      card.appendChild(img);
+      card.appendChild(title);
+      card.appendChild(desc);
+      card.appendChild(meta);
+      nftGrid.appendChild(card);
+    });
+  };
+
+  const getCachedSolanaAddress = () =>
+    appKitStore.walletInfo?.address ||
+    appKitStore.accountState?.allAccounts?.find((acc) => acc.namespace === 'solana')?.address;
+
+  nftButton?.addEventListener('click', async () => {
+    if (!nftButton) return;
+    try {
+      const modal = await setupAppKit();
+      const cached = getCachedSolanaAddress();
+      const fallbackWallet = await modal.getWalletInfo('solana');
+      const address = cached || fallbackWallet?.address;
+      if (!address) {
+        nftStatus && (nftStatus.textContent = 'Connect a wallet to view NFTs');
+        modal.open({ view: 'Connect', namespace: 'solana' });
+        return;
+      }
+      nftModal?.classList.add('active');
+      nftStatus && (nftStatus.textContent = 'Fetching NFTs...');
+      const assets = await fetchNfts(address);
+      if (!assets.length) {
+        nftStatus && (nftStatus.textContent = 'No NFTs found');
+        return;
+      }
+      nftStatus && (nftStatus.textContent = `Showing ${assets.length} assets`);
+      renderNfts(assets);
+    } catch (err) {
+      console.error('NFT fetch failed', err);
+      nftStatus && (nftStatus.textContent = 'Failed to load NFTs');
+    }
+  });
+
+  nftClose?.addEventListener('click', () => {
+    nftModal?.classList.remove('active');
+  });
 
   // Quick Play: single-room test scene (matches pulled dev behavior)
   document.getElementById('btn-quick-play')!.addEventListener('click', async () => {
