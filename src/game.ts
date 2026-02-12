@@ -112,6 +112,21 @@ export class Game {
   private inventoryScreen: InventoryScreen;
   private weaponPreviewMeshCache = new Map<string, THREE.Group>();
 
+  private nftPreviewGroup: THREE.Group | null = null;
+  private nftPreviewQuad: THREE.Mesh | null = null;
+  private nftPreviewLabel: THREE.Sprite | null = null;
+  private nftPreviewLoader = new THREE.TextureLoader();
+  private nftPreviewTexture: THREE.Texture | null = null;
+  private nftDrops: Array<{
+    group: THREE.Group;
+    baseY: number;
+    phase: number;
+    rotationSpeed: number;
+    data: { imageUrl: string; title: string };
+  }> = [];
+  private nftDropTime = 0;
+  public onNftPickup?: (data: { imageUrl: string; title: string }) => void;
+  
   private flashlight: THREE.SpotLight;
   private flashlightOn = false;
 
@@ -399,6 +414,106 @@ export class Game {
     this.loop = new GameLoop((dt) => this.tick(dt));
   }
 
+  setSelectedNft(data: { imageUrl: string; title: string }): void {
+    this.clearNftPreview();
+    this.spawnCard(data, new THREE.Vector3(0, -0.8, -1.8));
+  }
+
+  dropSelectedNft(data: { imageUrl: string; title: string }): void {
+    const cardWidth = 0.45;
+    const cardHeight = 0.8;
+    const thickness = 0.03;
+    const frontMat = new THREE.MeshStandardMaterial({
+      map: this.createCardTexture(data.imageUrl, data.title),
+      emissive: new THREE.Color(0x222222),
+      emissiveIntensity: 0.4,
+      side: THREE.FrontSide,
+    });
+    const backMat = new THREE.MeshStandardMaterial({
+      color: 0x111111,
+      emissive: 0x111111,
+      emissiveIntensity: 0.2,
+      side: THREE.FrontSide,
+    });
+    const plane = new THREE.PlaneGeometry(cardWidth, cardHeight);
+    const front = new THREE.Mesh(plane, frontMat);
+    front.position.z = thickness / 2;
+    const back = new THREE.Mesh(plane, backMat);
+    back.rotation.y = Math.PI;
+    back.position.z = -thickness / 2;
+    const edge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.PlaneGeometry(cardWidth, cardHeight)),
+      new THREE.LineBasicMaterial({ color: 0xffffff })
+    );
+    edge.position.z = thickness / 2 + 0.001;
+    const base = this.createCardGroup();
+    base.add(front, back, edge);
+    const dropPosition = this.calculateDropPosition();
+    base.position.copy(dropPosition);
+    this.scene.add(base);
+    this.nftDrops.push({
+      group: base,
+      baseY: dropPosition.y,
+      phase: Math.random() * Math.PI * 2,
+      rotationSpeed: 0.8 + Math.random() * 0.6,
+      data: { imageUrl: data.imageUrl, title: data.title },
+    });
+  }
+
+  private createCardGroup(): THREE.Group {
+    const group = new THREE.Group();
+    group.rotation.x = 0;
+    group.rotation.y = Math.PI;
+    return group;
+  }
+
+  private calculateDropPosition(): THREE.Vector3 {
+    const dir = new THREE.Vector3();
+    this.fpsCamera.camera.getWorldDirection(dir);
+    dir.normalize();
+    const origin = this.fpsCamera.camera.position.clone();
+    const dropDistance = 2.2;
+    const position = origin.add(dir.multiplyScalar(dropDistance));
+    position.y = -1.2;
+    return position;
+  }
+
+  clearNftPreview(): void {
+    if (this.nftPreviewGroup) {
+      this.scene.remove(this.nftPreviewGroup);
+    }
+    this.nftPreviewGroup = null;
+    this.nftPreviewQuad = null;
+    this.nftPreviewLabel = null;
+    if (this.nftPreviewTexture) {
+      this.nftPreviewTexture.dispose();
+      this.nftPreviewTexture = null;
+    }
+  }
+
+  private createCardTexture(imageUrl: string, title: string): THREE.Texture {
+    const side = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = side;
+    canvas.height = side;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#080808';
+    ctx.fillRect(0, 0, side, side);
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const texture = new THREE.CanvasTexture(canvas);
+    img.onload = () => {
+      ctx.drawImage(img, 20, 20, side - 40, side - 100);
+      ctx.font = 'bold 26px Courier New';
+      ctx.fillStyle = '#d4af37';
+      ctx.textAlign = 'center';
+      ctx.fillText(title, side / 2, side - 40);
+      texture.needsUpdate = true;
+    };
+    img.src = imageUrl;
+    return texture;
+  }
+
   showBriefing(level: LevelSchema): void {
     if (!this.briefingScreen) return;
     this.briefingScreen.show(level);
@@ -619,6 +734,33 @@ export class Game {
     this.triggerSystem?.update();
     this.pickupSystem.update(dt, this._playerVec);
     this.destructibleSystem.update(dt);
+    if (this.nftPreviewGroup) {
+      this.nftPreviewTime += dt;
+      this.nftDropTime += dt;
+      this.nftPreviewGroup.rotation.y += dt * 0.5;
+      const bob = Math.sin(this.nftPreviewTime * 2) * 0.05;
+      if (this.nftPreviewGroup) {
+        const baseY = -1.5;
+        const current = baseY + bob;
+        this.nftPreviewGroup.position.y = current;
+      }
+    }
+
+    if (this.nftDrops.length) {
+      this.nftDropTime += dt;
+      const playerPos = this.player.getPosition();
+      for (let i = this.nftDrops.length - 1; i >= 0; i--) {
+        const drop = this.nftDrops[i];
+        drop.group.rotation.y += dt * drop.rotationSpeed;
+        drop.group.position.y = drop.baseY + Math.sin(this.nftDropTime * 2 + drop.phase) * 0.08;
+        const distance = drop.group.position.distanceTo(playerPos);
+        if (distance < 0.5) {
+          this.scene.remove(drop.group);
+          this.nftDrops.splice(i, 1);
+          this.onNftPickup?.(drop.data);
+        }
+      }
+    }
 
     this.hud.updateHealth(this.player.health);
     this.hud.updateArmor(this.player.armor);
