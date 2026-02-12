@@ -16,10 +16,64 @@ import { PhysicsWorld } from './core/physics-world';
 import { Game } from './game';
 import { loadLevel } from "./levels/types/level-loader";
 import { LevelGenerator } from './levels';
+import type { LevelSchema } from './levels/types/level-schema';
 import { CCTVBackground } from './ui/cctv-background';
 import { ScreenGlitch } from './ui/screen-glitch';
 import { NetworkManager } from './network/network-manager';
 import { LobbyScreen } from './ui/lobby-screen';
+import { SettingsMenu } from './ui/settings-menu';
+import { CharacterModelsScreen } from './ui/character-models-screen';
+import { setEnemyRenderConfig, ENEMY_RENDER_CONFIG } from './enemies/enemy-render-config';
+import { preloadEnemySpriteSheet } from './enemies/sprite/guard-sprite-sheet';
+import {
+  preloadCustomEnemyModel,
+  preloadCustomPlayerModel,
+  loadAndCacheEnemyModelFromBuffer,
+  loadCharacterModelFromBuffer,
+  setCachedPlayerModel,
+  setCachedCharacterModel,
+} from './core/model-loader';
+import {
+  loadPersistedEnemyModel,
+  loadPersistedPlayerModel,
+  loadPersistedCharacterModel,
+} from './core/persisted-models';
+
+const STORAGE_RENDER_MODE = '007remix_enemy_render_mode';
+
+function getRenderMode(): '2d' | '3d' {
+  try {
+    const s = localStorage.getItem(STORAGE_RENDER_MODE);
+    if (s === '2d' || s === '3d') return s;
+  } catch {
+    // ignore storage access failures
+  }
+  return '3d';
+}
+
+function setRenderMode(mode: '2d' | '3d'): void {
+  try {
+    localStorage.setItem(STORAGE_RENDER_MODE, mode);
+  } catch {
+    // ignore storage access failures
+  }
+  if (mode === '2d') {
+    setEnemyRenderConfig({
+      mode: 'sprite',
+      spriteSource: 'image',
+      spriteImageUrl: '/sprites/enemy-guard.png',
+    });
+  } else {
+    setEnemyRenderConfig({ mode: 'model' });
+  }
+}
+
+function applyRenderModeUI(mode: '2d' | '3d'): void {
+  const btn2d = document.getElementById('btn-render-2d');
+  const btn3d = document.getElementById('btn-render-3d');
+  if (btn2d) btn2d.classList.toggle('active', mode === '2d');
+  if (btn3d) btn3d.classList.toggle('active', mode === '3d');
+}
 
 function buildRandomGenerationOptions() {
   // Vary room counts per mission so layout size/profile changes each run.
@@ -31,6 +85,8 @@ function buildRandomGenerationOptions() {
   const difficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
   return { minRooms, maxRooms, minEnemies, maxEnemies, difficulty };
 }
+
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
 
 async function init(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
@@ -45,6 +101,70 @@ async function init(): Promise<void> {
     }
     activeGame = game;
   };
+
+  preloadEnemySpriteSheet('/sprites/enemy-guard.png').catch(() => {
+    // Fallback to procedural/baked sprites if PNG is missing.
+  });
+
+  // Restore persisted uploaded models (survives reload and keeps dev behavior).
+  const customPath = ENEMY_RENDER_CONFIG.customModelPath;
+  const customModelReady = (async () => {
+    const persisted = await loadPersistedEnemyModel().catch(() => null);
+    if (persisted) {
+      setEnemyRenderConfig({ customModelPath: undefined });
+      try {
+        await loadAndCacheEnemyModelFromBuffer(persisted.arrayBuffer, persisted.fileName);
+      } catch (e) {
+        console.warn('Persisted enemy model failed to restore:', e);
+      }
+      return;
+    }
+    if (customPath) {
+      await preloadCustomEnemyModel(customPath).catch((err) => {
+        console.warn('Custom enemy model failed to load:', err);
+      });
+    }
+  })();
+
+  loadPersistedPlayerModel().then((p) => {
+    if (p) {
+      setEnemyRenderConfig({ customPlayerModelPath: undefined });
+      return loadCharacterModelFromBuffer(p.arrayBuffer, p.fileName)
+        .then((char) => setCachedPlayerModel(char))
+        .catch((e) => console.warn('Persisted player model failed:', e));
+    }
+  }).catch(() => {});
+
+  loadPersistedCharacterModel().then((p) => {
+    if (p) {
+      setEnemyRenderConfig({ customCharacterModelPath: undefined });
+      return loadCharacterModelFromBuffer(p.arrayBuffer, p.fileName)
+        .then((char) => setCachedCharacterModel(char))
+        .catch((e) => console.warn('Persisted character model failed:', e));
+    }
+  }).catch(() => {});
+
+  const playerPath = ENEMY_RENDER_CONFIG.customPlayerModelPath;
+  let customPlayerModelReady: Promise<void> = Promise.resolve();
+  if (playerPath) {
+    customPlayerModelReady = preloadCustomPlayerModel(playerPath)
+      .then(() => {})
+      .catch((err) => {
+        console.warn('Custom player model failed to load:', err);
+      });
+  }
+
+  const initialMode = getRenderMode();
+  setRenderMode(initialMode);
+  applyRenderModeUI(initialMode);
+  document.getElementById('btn-render-2d')?.addEventListener('click', () => {
+    setRenderMode('2d');
+    applyRenderModeUI('2d');
+  });
+  document.getElementById('btn-render-3d')?.addEventListener('click', () => {
+    setRenderMode('3d');
+    applyRenderModeUI('3d');
+  });
 
   // Create CCTV background for main menu
   const cctvPhysics = await PhysicsWorld.create();
@@ -81,8 +201,9 @@ async function init(): Promise<void> {
     canvas.style.display = 'none';
   };
 
-  // Quick Play: single room, click to start
-  document.getElementById('btn-quick-play')!.addEventListener('click', () => {
+  // Quick Play: single-room test scene (matches pulled dev behavior)
+  document.getElementById('btn-quick-play')!.addEventListener('click', async () => {
+    await customModelReady;
     const game = new Game(canvas, physics, {});
     activateGame(game);
     document.getElementById('start-screen')!.style.display = 'none';
@@ -92,6 +213,7 @@ async function init(): Promise<void> {
 
   // Mission: load facility, briefing, then play
   const missionBtn = document.getElementById('btn-mission');
+
   if (missionBtn) {
     missionBtn.addEventListener('click', async () => {
       const btn = missionBtn as HTMLButtonElement;
@@ -99,6 +221,7 @@ async function init(): Promise<void> {
       btn.textContent = 'LOADING...';
       btn.disabled = true;
       try {
+        await customModelReady;
         const level = await loadLevel('/levels/facility.json');
         const game = new Game(canvas, physics, { levelMode: true });
         activateGame(game);
@@ -127,8 +250,10 @@ async function init(): Promise<void> {
       btn.disabled = true;
       
       try {
+        await customModelReady;
         console.log('[Main] Generating random level...');
-        
+        await nextFrame();
+
         // Generate with a fresh seed and varied bounds each click.
         const seed = (Date.now() ^ Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
         const generator = new LevelGenerator(seed);
@@ -153,9 +278,21 @@ async function init(): Promise<void> {
           startScreen.style.display = 'none';
         }
         hideCCTVBackground();
+
+        // Spread heavy work over upcoming frames while briefing is visible.
+        const preloadPromise = (async () => {
+          await nextFrame();
+          game.loadLevel(level);
+          await nextFrame();
+          game.prewarmForGameplay();
+        })();
         
         // Show briefing (will be immediately visible)
-        game.showBriefing(level);
+        game.showBriefing(level, {
+          beforeStart: async () => {
+            await preloadPromise;
+          },
+        });
         
         // Reset button
         btn.textContent = origText ?? 'RANDOM LEVEL';
@@ -185,6 +322,36 @@ async function init(): Promise<void> {
   }
 
   // Multiplayer: show lobby first, then connect
+  const settingsMenu = new SettingsMenu();
+  settingsMenu.onBack = () => {
+    settingsMenu.hide();
+    setRenderMode(getRenderMode());
+    applyRenderModeUI(getRenderMode());
+    const startScreen = document.getElementById('start-screen');
+    if (startScreen) startScreen.style.display = 'flex';
+  };
+  document.getElementById('btn-settings')?.addEventListener('click', () => {
+    const startScreen = document.getElementById('start-screen');
+    if (startScreen) startScreen.style.display = 'none';
+    settingsMenu.show();
+  });
+
+  // Custom Models: restore dev behavior and keep menu flow.
+  const characterModelsScreen = new CharacterModelsScreen();
+  characterModelsScreen.onBack = () => {
+    characterModelsScreen.hide();
+    setRenderMode(getRenderMode());
+    applyRenderModeUI(getRenderMode());
+    const startScreen = document.getElementById('start-screen');
+    if (startScreen) startScreen.style.display = 'flex';
+  };
+  document.getElementById('btn-models')?.addEventListener('click', () => {
+    const startScreen = document.getElementById('start-screen');
+    if (startScreen) startScreen.style.display = 'none';
+    characterModelsScreen.show();
+  });
+
+  // Multiplayer: show lobby first, then connect
   const lobbyScreen = new LobbyScreen();
   const multiplayerBtn = document.getElementById('btn-multiplayer');
   if (multiplayerBtn) {
@@ -193,6 +360,10 @@ async function init(): Promise<void> {
       lobbyScreen.show({
         onJoin: async (username) => {
           try {
+            await customModelReady;
+            if (ENEMY_RENDER_CONFIG.customPlayerModelPath) {
+              await customPlayerModelReady;
+            }
             const networkManager = new NetworkManager(username);
             await networkManager.connect();
 
@@ -232,8 +403,10 @@ async function init(): Promise<void> {
       btn.disabled = true;
       
       try {
+        await customModelReady;
         console.log('[Main] Generating next level...');
-        
+        await nextFrame();
+
         const seed = (Date.now() ^ Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
         const generator = new LevelGenerator(seed);
         const level = generator.generate(buildRandomGenerationOptions());
@@ -245,9 +418,19 @@ async function init(): Promise<void> {
         game.onMissionComplete = () => {
           document.getElementById('mission-complete')!.style.display = 'flex';
         };
+        const preloadPromise = (async () => {
+          await nextFrame();
+          game.loadLevel(level);
+          await nextFrame();
+          game.prewarmForGameplay();
+        })();
         
         // Show briefing
-        game.showBriefing(level);
+        game.showBriefing(level, {
+          beforeStart: async () => {
+            await preloadPromise;
+          },
+        });
         
         btn.textContent = origText ?? 'NEXT LEVEL';
         btn.disabled = false;
