@@ -125,7 +125,7 @@ export class Game {
     data: { imageUrl: string; title: string };
   }> = [];
   private nftDropTime = 0;
-  public onNftPickup?: (data: { imageUrl: string; title: string }) => void;
+  public onNftPickup?: (data: { imageUrl: string; title: string; key: string }) => void;
   
   private flashlight: THREE.SpotLight;
   private flashlightOn = false;
@@ -419,35 +419,57 @@ export class Game {
     this.spawnCard(data, new THREE.Vector3(0, -0.8, -1.8));
   }
 
-  dropSelectedNft(data: { imageUrl: string; title: string }): void {
-    const cardWidth = 0.45;
-    const cardHeight = 0.8;
-    const thickness = 0.03;
+  dropSelectedNft(data: { imageUrl: string; title: string; key: string }): void {
+    const cardWidth = 0.4;
+    const baseHeight = 0.45;
+    const thickness = 0.05;
+
+    let scalingMesh: THREE.Mesh | null = null;
+    const cardTexture = this.createCardTexture(data.imageUrl, data.title, (aspectRatio) => {
+      if (!scalingMesh) return;
+      scalingMesh.scale.y = Math.max(1, aspectRatio);
+    });
+    const backTexture = cardTexture.clone();
+    backTexture.needsUpdate = true;
     const frontMat = new THREE.MeshStandardMaterial({
-      map: this.createCardTexture(data.imageUrl, data.title),
+      map: cardTexture,
+      emissive: new THREE.Color(0x222222),
+      emissiveIntensity: 0.5,
+      side: THREE.FrontSide,
+      transparent: true,
+    });
+    const backMat = new THREE.MeshStandardMaterial({
+      map: backTexture,
       emissive: new THREE.Color(0x222222),
       emissiveIntensity: 0.4,
       side: THREE.FrontSide,
+      transparent: true,
     });
-    const backMat = new THREE.MeshStandardMaterial({
-      color: 0x111111,
-      emissive: 0x111111,
-      emissiveIntensity: 0.2,
-      side: THREE.FrontSide,
+    const sideMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      emissive: 0x222222,
+      emissiveIntensity: 0.25,
     });
-    const plane = new THREE.PlaneGeometry(cardWidth, cardHeight);
-    const front = new THREE.Mesh(plane, frontMat);
-    front.position.z = thickness / 2;
-    const back = new THREE.Mesh(plane, backMat);
-    back.rotation.y = Math.PI;
-    back.position.z = -thickness / 2;
-    const edge = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.PlaneGeometry(cardWidth, cardHeight)),
-      new THREE.LineBasicMaterial({ color: 0xffffff })
-    );
-    edge.position.z = thickness / 2 + 0.001;
+    const geometry = new THREE.BoxGeometry(cardWidth, baseHeight, thickness);
+    const materials = [sideMat, sideMat, sideMat, sideMat, frontMat, backMat];
+    const cardMesh = new THREE.Mesh(geometry, materials);
+    scalingMesh = cardMesh;
+    cardMesh.castShadow = true;
+    cardMesh.receiveShadow = true;
+    cardMesh.geometry = geometry;
+    cardMesh.material = materials;
     const base = this.createCardGroup();
-    base.add(front, back, edge);
+    base.add(cardMesh);
+    const glowGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(cardWidth + 0.05, baseHeight + 0.05, thickness + 0.02));
+    const glowMat = new THREE.LineBasicMaterial({
+      color: 0xf8d78c,
+      transparent: true,
+      opacity: 0.5,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const glow = new THREE.LineSegments(glowGeo, glowMat);
+    base.add(glow);
     const dropPosition = this.calculateDropPosition();
     base.position.copy(dropPosition);
     this.scene.add(base);
@@ -456,10 +478,9 @@ export class Game {
       baseY: dropPosition.y,
       phase: Math.random() * Math.PI * 2,
       rotationSpeed: 0.8 + Math.random() * 0.6,
-      data: { imageUrl: data.imageUrl, title: data.title },
+      data: { imageUrl: data.imageUrl, title: data.title, key: data.key },
     });
   }
-
   private createCardGroup(): THREE.Group {
     const group = new THREE.Group();
     group.rotation.x = 0;
@@ -491,7 +512,7 @@ export class Game {
     }
   }
 
-  private createCardTexture(imageUrl: string, title: string): THREE.Texture {
+  private createCardTexture(imageUrl: string, title: string, onSize?: (ratio: number) => void): THREE.Texture {
     const side = 512;
     const canvas = document.createElement('canvas');
     canvas.width = side;
@@ -503,12 +524,29 @@ export class Game {
     img.crossOrigin = 'anonymous';
     const texture = new THREE.CanvasTexture(canvas);
     img.onload = () => {
-      ctx.drawImage(img, 20, 20, side - 40, side - 100);
+      const padding = 10;
+      const maxW = side - padding * 2;
+      const maxH = side - 80;
+      let drawW = img.width;
+      let drawH = img.height;
+      const aspect = img.width / img.height;
+      if (drawW > maxW) {
+        drawW = maxW;
+        drawH = drawW / aspect;
+      }
+      if (drawH > maxH) {
+        drawH = maxH;
+        drawW = drawH * aspect;
+      }
+      const x = (side - drawW) / 2;
+      const y = padding + (maxH - drawH) / 2;
+      ctx.drawImage(img, x, y, drawW, drawH);
       ctx.font = 'bold 26px Courier New';
       ctx.fillStyle = '#d4af37';
       ctx.textAlign = 'center';
       ctx.fillText(title, side / 2, side - 40);
       texture.needsUpdate = true;
+      onSize?.(drawH / drawW);
     };
     img.src = imageUrl;
     return texture;

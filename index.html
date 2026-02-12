@@ -45,10 +45,84 @@
       width: 100%;
       height: 100%;
       pointer-events: none;
-      font-family: 'Courier New', monospace;
-      color: #fff;
-      z-index: 10;
+  font-family: 'Courier New', monospace;
+  color: #fff;
+  z-index: 10;
+}
+  #nft-preview {
+    position: absolute;
+    bottom: 48px;
+    right: 48px;
+    width: 160px;
+    height: 200px;
+    pointer-events: none;
+    perspective: 1000px;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+  #nft-preview.visible {
+    opacity: 1;
+  }
+  .nft-preview-card {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.9), rgba(18, 18, 18, 0.95));
+    border-radius: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 8px 10px 1px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 2px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.75);
+    transform-style: preserve-3d;
+    animation: rotate-card 12s linear infinite;
+    position: relative;
+  }
+  .nft-preview-card .nft-preview-face {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    padding-top: 12px;
+    backface-visibility: hidden;
+  }
+  .nft-preview-card .back-face {
+    transform: rotateY(180deg);
+  }
+  .nft-preview-card img {
+    width: 100%;
+    height: 130px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+  }
+  .nft-preview-card .nft-preview-title {
+    font-size: 14px;
+    font-weight: bold;
+    color: #fff;
+    text-align: center;
+    margin-bottom: 0px;
+  }
+  @keyframes rotate-card {
+    from {
+      transform: rotateY(0deg);
     }
+    to {
+      transform: rotateY(360deg);
+    }
+  }
     #crosshair {
       position: absolute;
       top: 50%;
@@ -217,29 +291,29 @@
     #nft-modal {
       position: fixed;
       inset: 0;
-      background: rgba(0, 0, 0, 0.82);
+      background: rgba(0, 0, 0, 0.35);
       display: none;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-end;
       z-index: 9998;
-      padding: 24px;
+      padding: 32px 32px 32px 12px;
     }
     #nft-modal.active {
       display: flex;
     }
     .nft-modal-card {
-      width: min(980px, 92vw);
-      background: #050505;
-      border: 1px solid #1b1b1b;
-      border-radius: 12px;
-      padding: 28px;
+      width: min(380px, 40vw);
+      background: rgba(5, 5, 5, 0.95);
+      border: 1px solid #171717;
+      border-radius: 16px;
+      padding: 18px;
       position: relative;
-      box-shadow: 0 30px 80px rgba(0, 0, 0, 0.75);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.7);
       max-height: 85vh;
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
     }
     #nft-modal-close {
       position: absolute;
@@ -258,11 +332,11 @@
     }
     .nft-modal-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-      gap: 16px;
-      max-height: 60vh;
+      grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+      gap: 10px;
+      max-height: 70vh;
       overflow-y: auto;
-      padding-right: 8px;
+      padding-right: 6px;
     }
     .nft-modal-grid::-webkit-scrollbar {
       width: 6px;
@@ -271,31 +345,62 @@
       background: rgba(212, 175, 55, 0.5);
     }
     .nft-card {
-      background: #0c0c0c;
-      border: 1px solid #1f1f1f;
-      border-radius: 10px;
-      padding: 10px;
+      background: rgba(14, 14, 14, 0.85);
+      border: 1px solid rgba(212, 175, 55, 0.4);
+      border-radius: 8px;
+      padding: 8px 10px 6px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
+      transition: border 0.2s, filter 0.2s;
+      max-width: 120px;
+    }
+    .nft-card.in-world {
+      filter: grayscale(1) brightness(0.5);
+      border-color: rgba(128, 128, 128, 0.6);
+    }
+    .nft-card-image-wrapper {
+      width: 100%;
+      padding: 4px 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
     }
     .nft-card-image {
-      width: 100%;
-      height: 120px;
-      object-fit: cover;
-      border-radius: 7px;
-      background: #1b1b1b;
+      width: calc(100% - 16px);
+      height: auto;
+      aspect-ratio: 1 / 1;
+      object-fit: contain;
+      border-radius: 6px;
+      background: #111;
+      padding: 2px;
+      box-sizing: border-box;
     }
     .nft-card-title {
-      font-size: 12px;
-      color: #f5f5f5;
-      font-weight: bold;
-      min-height: 28px;
-    }
-    .nft-card-description {
       font-size: 10px;
-      color: #a2a2a2;
-      min-height: 30px;
+      color: #f5f5f5;
+      font-weight: 600;
+      line-height: 1.2;
+      padding-bottom: 0;
+      margin: 0;
+    }
+    .nft-card-select {
+      border: 1px solid rgba(212, 175, 55, 0.8);
+      background: transparent;
+      color: #d4af37;
+      font-family: 'Courier New', monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border 0.2s;
+      font-size: 10px;
+    }
+    .nft-card-select:hover {
+      background: rgba(212, 175, 55, 0.1);
+      border-color: rgba(212, 175, 55, 1);
+      color: #fff;
     }
     #mission-complete {
       position: absolute;
@@ -414,7 +519,7 @@
       <button id="btn-nft-gallery">NFTS</button>
     </div>
 
-  <div id="hud" style="display: none;">
+<div id="hud" style="display: none;">
     <div id="crosshair">+</div>
     <div id="health-display">
       <span style="color: #e44;">&#9829;</span> <span id="health-value">100</span>
@@ -424,6 +529,8 @@
     </div>
     <div id="controls-hint" style="position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 11px; color: rgba(255,255,255,0.45); font-family: 'Courier New', monospace; pointer-events: none;">Tab Inventory · Shift Sprint · C Crouch · N NV/Mask · V Flashlight</div>
   </div>
+
+  <div id="nft-preview"></div>
 
   <div id="start-screen">
     <p class="brand-text">00doge</p>

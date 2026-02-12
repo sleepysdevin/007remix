@@ -100,6 +100,7 @@ async function init(): Promise<void> {
 
   const activateGame = (game: Game): void => {
     if (activeGame && activeGame !== game) {
+      activeGame.clearNftPreview();
       activeGame.stop();
     }
     activeGame = game;
@@ -226,44 +227,100 @@ async function init(): Promise<void> {
   const nftGrid = document.getElementById('nft-grid') as HTMLDivElement | null;
   const nftStatus = document.getElementById('nft-status') as HTMLElement | null;
   const nftClose = document.getElementById('nft-modal-close') as HTMLButtonElement | null;
-
-  const renderNfts = (assets: Array<{
+  const nftPreviewWrapper = document.getElementById('nft-preview') as HTMLDivElement | null;
+  type Asset = {
     name?: string;
     description?: string;
     symbol?: string;
-    img?: string;
     image?: string;
     imageUrl?: string;
-    content?: { metadata?: { name?: string; description?: string; symbol?: string }; json_uri?: string };
+    img?: string;
     interface?: string;
-  }>) => {
+    mintAddress?: string;
+    content?: { metadata?: { name?: string; description?: string; symbol?: string }; json_uri?: string };
+  };
+  const cachedAssets: Asset[] = [];
+  const assetCache = new Map<string, Asset>();
+  const inWorldAssets = new Set<string>();
+  const getAssetKey = (asset: Asset) =>
+    asset.mintAddress || `${asset.imageUrl || asset.image || asset.img || 'unknown'}|${
+      asset.name ?? asset.content?.metadata?.name ?? asset.symbol ?? asset.interface ?? 'unknown'
+    }`;
+  const ensureCachedAsset = (asset: Asset) => {
+    const key = getAssetKey(asset);
+    if (!cachedAssets.some((item) => getAssetKey(item) === key)) {
+      cachedAssets.push(asset);
+    }
+    assetCache.set(key, asset);
+  };
+  const markAssetInWorld = (key: string, inWorld: boolean) => {
+    if (inWorld) inWorldAssets.add(key);
+    else inWorldAssets.delete(key);
+  };
+
+  let nftViewMode: 'hud' | 'world' = 'hud';
+  const viewHudBtn = document.getElementById('nft-view-hud');
+  const viewWorldBtn = document.getElementById('nft-view-world');
+  const updateViewButtons = () => {
+    if (viewHudBtn) viewHudBtn.classList.toggle('active', nftViewMode === 'hud');
+    if (viewWorldBtn) viewWorldBtn.classList.toggle('active', nftViewMode === 'world');
+  };
+  viewHudBtn?.addEventListener('click', () => {
+    nftViewMode = 'hud';
+    updateViewButtons();
+    renderNfts(cachedAssets);
+  });
+  viewWorldBtn?.addEventListener('click', () => {
+    nftViewMode = 'world';
+    updateViewButtons();
+    renderNfts(cachedAssets);
+  });
+  const renderNfts = (assets: Asset[]) => {
     if (!nftGrid) return;
     nftGrid.replaceChildren();
     assets.slice(0, 12).forEach((asset) => {
       const card = document.createElement('div');
       card.className = 'nft-card';
+      const key = getAssetKey(asset);
+      card.dataset.assetKey = key;
+      if (inWorldAssets.has(key)) card.classList.add('in-world');
       const img = document.createElement('img');
       img.className = 'nft-card-image';
+      const imageWrapper = document.createElement('div');
+      imageWrapper.className = 'nft-card-image-wrapper';
       const imageSrc =
         asset.content?.json_uri || asset.imageUrl || asset.img || asset.image || '/placeholder.png';
       img.src = imageSrc;
       img.alt = asset.name ?? asset.content?.metadata?.name ?? 'NFT';
+      imageWrapper.appendChild(img);
       const title = document.createElement('div');
       title.className = 'nft-card-title';
       title.textContent = asset.name ?? asset.content?.metadata?.name ?? 'Unknown NFT';
-      const desc = document.createElement('div');
-      desc.className = 'nft-card-description';
-      desc.textContent =
-        asset.description ?? asset.content?.metadata?.description ?? 'No description available.';
-      const meta = document.createElement('div');
-      meta.className = 'nft-card-description';
-      meta.textContent =
-        asset.symbol ?? asset.content?.metadata?.symbol ?? asset.interface ?? 'No symbol';
-
       card.appendChild(img);
       card.appendChild(title);
-      card.appendChild(desc);
-      card.appendChild(meta);
+      const select = document.createElement('button');
+      select.className = 'nft-card-select';
+      const updateButton = () => {
+        if (inWorldAssets.has(key)) {
+          select.textContent = 'In World';
+          select.disabled = true;
+          card.classList.add('in-world');
+        } else {
+          select.textContent = 'Bring Into World';
+          select.disabled = false;
+          card.classList.remove('in-world');
+        }
+      };
+      updateButton();
+      select.addEventListener('click', () => {
+        showNftPreview(asset);
+        dropAssetInWorld(asset);
+        nftModal?.classList.remove('active');
+        if (nftButton) {
+          nftButton.textContent = `Selected: ${asset.name ?? asset.content?.metadata?.name ?? 'NFT'}`;
+        }
+      });
+      card.appendChild(select);
       nftGrid.appendChild(card);
     });
   };
@@ -292,7 +349,9 @@ async function init(): Promise<void> {
         return;
       }
       nftStatus && (nftStatus.textContent = `Showing ${assets.length} assets`);
-      renderNfts(assets);
+      cachedAssets.length = 0;
+      assets.forEach(ensureCachedAsset);
+      renderNfts(cachedAssets);
     } catch (err) {
       console.error('NFT fetch failed', err);
       nftStatus && (nftStatus.textContent = 'Failed to load NFTs');
@@ -303,13 +362,70 @@ async function init(): Promise<void> {
     nftModal?.classList.remove('active');
   });
 
+  const showNftPreview = (asset: {
+    name?: string;
+    symbol?: string;
+    image?: string;
+    imageUrl?: string;
+    img?: string;
+    content?: { metadata?: { name?: string; description?: string; symbol?: string }; json_uri?: string };
+  }) => {
+    if (!nftPreviewWrapper) return;
+    nftPreviewWrapper.replaceChildren();
+    nftPreviewWrapper.classList.add('visible');
+    const card = document.createElement('div');
+    card.className = 'nft-preview-card';
+    const imageSrc = asset.image || asset.imageUrl || asset.img || asset.content?.json_uri || '/placeholder.png';
+    const createFace = () => {
+      const face = document.createElement('div');
+      face.className = 'nft-preview-face';
+      const imgEl = document.createElement('img');
+      imgEl.src = imageSrc;
+      imgEl.alt = asset.name ?? 'NFT Preview';
+      const titleEl = document.createElement('div');
+      titleEl.className = 'nft-preview-title';
+      titleEl.textContent = asset.name ?? asset.content?.metadata?.name ?? 'Selected NFT';
+      face.appendChild(imgEl);
+      face.appendChild(titleEl);
+      return face;
+    };
+    const front = createFace();
+    const back = createFace();
+    back.classList.add('back-face');
+    card.appendChild(front);
+    card.appendChild(back);
+    nftPreviewWrapper.appendChild(card);
+  };
+
+  const dropAssetInWorld = (asset: Asset) => {
+    if (!activeGame) return;
+    const image = asset.image || asset.imageUrl || asset.img || asset.content?.json_uri;
+    const name = asset.name ?? asset.content?.metadata?.name ?? 'NFT';
+    const key = getAssetKey(asset);
+    const assetId = asset.mintAddress ?? key;
+    activeGame.dropSelectedNft({ imageUrl: image ?? '/placeholder.png', title: name, assetId, key });
+    markAssetInWorld(key, true);
+    ensureCachedAsset(asset);
+    renderNfts(cachedAssets);
+  };
+
   // Quick Play: single-room test scene (matches pulled dev behavior)
   document.getElementById('btn-quick-play')!.addEventListener('click', async () => {
     await customModelReady;
-    const game = new Game(canvas, physics, {});
-    activateGame(game);
+      const game = new Game(canvas, physics, { levelMode: true });
+      activateGame(game);
+      game.onNftPickup = (data) => {
+        markAssetInWorld(data.key, false);
+        const cached = assetCache.get(data.key);
+        if (cached) {
+          ensureCachedAsset(cached);
+        }
+        renderNfts(cachedAssets);
+      };
     document.getElementById('start-screen')!.style.display = 'none';
     hideCCTVBackground();
+    const level = await loadLevel('/levels/facility.json');
+    game.loadLevel(level);
     await setupAppKit();
     game.start();
   });
