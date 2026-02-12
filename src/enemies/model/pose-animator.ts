@@ -63,8 +63,15 @@ export class PoseAnimator {
   play(name: AnimationName, force = false): void {
     if (name === this.currentAnim && !force && !this._finished) return;
     this.currentAnim = name;
-    this.keyframeIndex = 0;
-    this.elapsed = 0;
+    const anim = ANIMATIONS[name];
+    if (anim?.loop && anim.keyframes.length > 0) {
+      this.keyframeIndex = Math.floor(Math.random() * anim.keyframes.length);
+      const kf = anim.keyframes[this.keyframeIndex];
+      this.elapsed = Math.random() * Math.max(0.0001, kf.duration);
+    } else {
+      this.keyframeIndex = 0;
+      this.elapsed = 0;
+    }
     this._finished = false;
     this.updateCurrentPose();
   }

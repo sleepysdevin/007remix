@@ -9,6 +9,8 @@ export class HUD {
   private grenadeEl: HTMLElement;
   private pingEl: HTMLElement;
   private killsEl: HTMLElement;
+  private pickupNoticeEl: HTMLElement;
+  private pickupHideTimer: number | null = null;
 
   private crosshairFlashTimer = 0;
 
@@ -75,6 +77,22 @@ export class HUD {
       visibility: hidden;
     `;
     this.hudEl.appendChild(this.killsEl);
+
+    this.pickupNoticeEl = document.createElement('div');
+    this.pickupNoticeEl.style.cssText = `
+      position: absolute;
+      bottom: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 16px;
+      font-family: 'Courier New', monospace;
+      color: #ffdd44;
+      text-shadow: 0 0 4px rgba(0,0,0,0.8);
+      pointer-events: none;
+      transition: opacity 0.18s ease-out, transform 0.18s ease-out;
+      opacity: 0;
+    `;
+    this.hudEl.appendChild(this.pickupNoticeEl);
   }
 
   /** Update kills display (multiplayer). Pass null to hide. */
@@ -176,27 +194,20 @@ export class HUD {
 
   /** Show pickup notification briefly */
   showPickupNotification(text: string): void {
-    const el = document.createElement('div');
-    el.style.cssText = `
-      position: absolute;
-      bottom: 80px;
-      left: 50%;
-      transform: translateX(-50%);
-      font-size: 16px;
-      font-family: 'Courier New', monospace;
-      color: #ffdd44;
-      text-shadow: 0 0 4px rgba(0,0,0,0.8);
-      pointer-events: none;
-      transition: opacity 0.5s, transform 0.5s;
-    `;
-    el.textContent = text;
-    this.hudEl.appendChild(el);
+    if (this.pickupHideTimer !== null) {
+      window.clearTimeout(this.pickupHideTimer);
+      this.pickupHideTimer = null;
+    }
 
-    setTimeout(() => {
-      el.style.opacity = '0';
-      el.style.transform = 'translateX(-50%) translateY(-20px)';
-    }, 1000);
-    setTimeout(() => el.remove(), 1500);
+    this.pickupNoticeEl.textContent = text;
+    this.pickupNoticeEl.style.opacity = '1';
+    this.pickupNoticeEl.style.transform = 'translateX(-50%) translateY(0)';
+
+    this.pickupHideTimer = window.setTimeout(() => {
+      this.pickupNoticeEl.style.opacity = '0';
+      this.pickupNoticeEl.style.transform = 'translateX(-50%) translateY(-14px)';
+      this.pickupHideTimer = null;
+    }, 650);
   }
 
   update(dt: number): void {

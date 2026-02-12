@@ -16,6 +16,7 @@ export type WeaponType = 'pistol' | 'rifle' | 'shotgun' | 'sniper';
 export class WeaponViewModel {
   readonly group: THREE.Group;
   private weaponMesh: THREE.Group;
+  private readonly weaponMeshCache = new Map<string, THREE.Group>();
   private muzzleFlash: THREE.Mesh;
   private muzzleLight: THREE.PointLight;
   private flashTexture!: THREE.CanvasTexture;
@@ -44,9 +45,10 @@ export class WeaponViewModel {
     this.group = new THREE.Group();
     this.group.renderOrder = 999;
 
-    this.weaponMesh = this.buildWeaponMesh('pistol', 'default');
+    this.weaponMesh = this.getCachedWeaponMesh('pistol', 'default');
     this.weaponMesh.position.copy(this.restPosition);
     this.group.add(this.weaponMesh);
+    this.prewarmDefaultWeaponMeshes();
 
     // Muzzle flash — procedural sprite atlas with additive blending
     const flashTex = generateMuzzleFlashTexture();
@@ -83,7 +85,7 @@ export class WeaponViewModel {
     this.scopeTransition = 0;
 
     this.group.remove(this.weaponMesh);
-    this.weaponMesh = this.buildWeaponMesh(type, skin);
+    this.weaponMesh = this.getCachedWeaponMesh(type, skin);
     this.group.add(this.weaponMesh);
 
     // Per-weapon rest position and muzzle offset (at barrel tip — flash at muzzle opening)
@@ -114,7 +116,7 @@ export class WeaponViewModel {
   setSkin(skin: WeaponSkin): void {
     this.currentSkin = skin;
     this.group.remove(this.weaponMesh);
-    this.weaponMesh = this.buildWeaponMesh(this.currentType, skin);
+    this.weaponMesh = this.getCachedWeaponMesh(this.currentType, skin);
     this.group.add(this.weaponMesh);
     this.weaponMesh.position.copy(this.restPosition);
     // Apply current muzzle offset before attaching
@@ -265,10 +267,31 @@ export class WeaponViewModel {
 
   /** Build a weapon mesh for preview rendering (inventory thumbnails). Same mesh as in-world. */
   buildWeaponMeshForPreview(type: WeaponType, skin: WeaponSkin): THREE.Group {
-    return this.buildWeaponMesh(type, skin);
+    return this.getCachedWeaponMesh(type, skin);
   }
 
   // ─── Weapon mesh builders ───
+
+  private getCacheKey(type: WeaponType, skin: WeaponSkin): string {
+    return `${type}:${skin}`;
+  }
+
+  private getCachedWeaponMesh(type: WeaponType, skin: WeaponSkin): THREE.Group {
+    const key = this.getCacheKey(type, skin);
+    let cached = this.weaponMeshCache.get(key);
+    if (!cached) {
+      cached = this.buildWeaponMesh(type, skin);
+      this.weaponMeshCache.set(key, cached);
+    }
+    return cached.clone(true);
+  }
+
+  private prewarmDefaultWeaponMeshes(): void {
+    // Prebuild defaults so first pickup/switch doesn't stall rendering.
+    this.getCachedWeaponMesh('rifle', 'default');
+    this.getCachedWeaponMesh('shotgun', 'default');
+    this.getCachedWeaponMesh('sniper', 'default');
+  }
 
   private buildWeaponMesh(type: WeaponType, skin: WeaponSkin): THREE.Group {
     switch (type) {

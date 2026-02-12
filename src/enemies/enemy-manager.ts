@@ -1,312 +1,430 @@
+// src/enemies/enemy-manager.ts
 import * as THREE from 'three';
-import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsWorld } from '../core/physics-world';
+import type * as RAPIER from '@dimforge/rapier3d-compat';
 import { EventBus } from '../core/event-bus';
+import { PhysicsWorld } from '../core/physics-world';
 import { EnemyBase } from './enemy-base';
-import { GUARD_VARIANTS, type GuardVariant } from './sprite/guard-sprite-sheet';
-import { perceivePlayer, type PerceptionResult } from './ai/perception';
-import { createIdleState } from './ai/states/idle-state';
+import { createAttackState } from './ai/states/attack-state';
 import { createPatrolState } from './ai/states/patrol-state';
 import { createAlertState } from './ai/states/alert-state';
-import { createAttackState } from './ai/states/attack-state';
-import { playGunshot } from '../audio/sound-effects';
+import { createIdleState } from './ai/states/idle-state';
+import { createDeadState } from './ai/states/dead-state';
+import { perceivePlayer, type PerceptionResult } from './ai/perception';
+import { GUARD_VARIANTS, type GuardVariant } from './sprite/guard-sprite-sheet';
 
-const ALERT_PROPAGATION_RANGE = 12;
-const DEAD_REMOVAL_TIME = 5;
+export type EnemyObject = EnemyBase;
 
 export interface EnemySpawn {
+  id?: string;
   x: number;
   y: number;
   z: number;
-  facingAngle: number;
-  /** Optional patrol path. When set, enemy starts in patrol state. */
-  waypoints?: { x: number; z: number }[];
-  /** Optional variant: 'guard', 'soldier', 'officer'. Default: 'guard'. */
-  variant?: string;
+  facingAngle?: number;
+  waypoints?: Array<{ x: number; y: number; z: number }>;
+  variant?: GuardVariant;
+  firstShotDelay?: number;
+  health?: number;
+  speed?: number;
+  roomBounds?: {
+    minX: number;
+    maxX: number;
+    minZ: number;
+    maxZ: number;
+  };
 }
 
+const DEFAULT_VARIANT: GuardVariant = GUARD_VARIANTS.guard;
+
+// Ground detection tuning
+// IMPORTANT: must start INSIDE the room (below ceiling). yHint is near floor
+// level already, so 1.5 above keeps us well below any ceiling (height >= 3).
+const SPAWN_RAY_START_ABOVE = 1.5;
+const SPAWN_RAY_LEN = 5.0;
+const FEET_EPS = 0.02;              // tiny lift so feet don’t z-fight
+const ENEMY_MIN_SEPARATION = 0.95;
+const ENEMY_SEPARATION_STRENGTH = 2.4;
+const ENEMY_SPEED_SCALE = 0.75;
+
+
+
 export class EnemyManager {
-  private enemies: EnemyBase[] = [];
   private scene: THREE.Scene;
   private physics: PhysicsWorld;
   private events: EventBus;
-
-  // Player state — set externally each frame
-  private playerPos = new THREE.Vector3();
-  private cameraPos = new THREE.Vector3();
   private playerCollider: RAPIER.Collider;
-  private playerIsMoving = false;
+
+  private enemies: EnemyObject[] = [];
+  private enemyByColliderHandle = new Map<number, EnemyObject>();
+
+  private playerPos = new THREE.Vector3();
+  private playerMoving = false;
   private playerFiredRecently = false;
   private playerFiredTimer = 0;
 
-  // Pooled muzzle flash lights for enemy shots (reuse instead of create/destroy)
-  private muzzleFlashPool: THREE.PointLight[] = [];
-  private muzzleFlashTimers: number[] = [];
+  private cameraPos = new THREE.Vector3();
 
-  // Callback for when enemy shoots the player
-  onPlayerHit: ((damage: number, fromPos: THREE.Vector3) => void) | null = null;
+  onPlayerHit: ((damage: number) => void) | null = null;
 
   constructor(
     scene: THREE.Scene,
     physics: PhysicsWorld,
     events: EventBus,
-    playerCollider: RAPIER.Collider,
+    playerCollider: RAPIER.Collider
   ) {
     this.scene = scene;
     this.physics = physics;
     this.events = events;
     this.playerCollider = playerCollider;
 
-    // Pre-create a small pool of muzzle flash lights (max 4 concurrent)
-    for (let i = 0; i < 4; i++) {
-      const light = new THREE.PointLight(0xffaa33, 0, 8);
-      light.visible = false;
-      this.scene.add(light);
-      this.muzzleFlashPool.push(light);
-      this.muzzleFlashTimers.push(0);
-    }
-
-    // Listen for weapon fired events to track player gunshots
-    this.events.on('weapon:fired', () => {
+    // Optional: listen for weapon fire to make enemies “hear” it.
+    // If your EventBus emits 'weapon:fired', this keeps hearing consistent.
+    this.events.on?.('weapon:fired', () => {
       this.playerFiredRecently = true;
-      this.playerFiredTimer = 0.5;
+      this.playerFiredTimer = 0.25; // gunshot audible window
     });
   }
 
-  /** Spawn an enemy at the given position */
-  spawnEnemy(spawn: EnemySpawn): EnemyBase {
-    const variant: GuardVariant = spawn.variant && GUARD_VARIANTS[spawn.variant]
-      ? GUARD_VARIANTS[spawn.variant]
-      : GUARD_VARIANTS.guard;
-    const enemy = new EnemyBase(
-      this.physics,
-      spawn.x, spawn.y, spawn.z,
-      spawn.facingAngle,
-      variant,
-    );
-    if (spawn.waypoints?.length) {
-      enemy.waypoints = [...spawn.waypoints];
-    }
-
-    // Register AI states
-    enemy.stateMachine.addState(createIdleState(this));
-    enemy.stateMachine.addState(createPatrolState(this));
-    enemy.stateMachine.addState(createAlertState(this));
-    enemy.stateMachine.addState(createAttackState(this));
-
-    const startState = enemy.waypoints.length >= 2 ? 'patrol' : 'idle';
-    enemy.stateMachine.transition(startState, enemy);
-
-    this.enemies.push(enemy);
-    this.scene.add(enemy.group);
-
-    return enemy;
+  get aliveCount(): number {
+    let n = 0;
+    for (const e of this.enemies) if (!e.dead) n++;
+    return n;
   }
 
-  /** Update player state (called each frame from Game) */
-  setPlayerState(
-    pos: THREE.Vector3,
-    isMoving: boolean,
-  ): void {
-    this.playerPos.copy(pos);
-    this.playerIsMoving = isMoving;
+  getPhysics(): PhysicsWorld {
+    return this.physics;
   }
 
   getPlayerPosition(): THREE.Vector3 {
     return this.playerPos;
   }
 
-  /** Update camera position for sprite billboarding */
   setCameraPosition(pos: THREE.Vector3): void {
     this.cameraPos.copy(pos);
   }
 
-  /** Get perception result for an enemy */
-  getPerception(enemy: EnemyBase): PerceptionResult | null {
-    if (enemy.dead) return null;
-    return perceivePlayer(
-      enemy,
-      this.playerPos,
-      this.playerCollider,
-      this.physics,
-      this.playerIsMoving,
-      this.playerFiredRecently,
-    );
+  setPlayerState(pos: THREE.Vector3, isMoving: boolean): void {
+    this.playerPos.copy(pos);
+    this.playerMoving = isMoving;
   }
 
-  /** Sync enemy mesh position to physics body */
-  syncPhysicsBody(enemy: EnemyBase): void {
-    const pos = enemy.group.position;
-    const bodyH = 0.7 + 0.3; // half height + radius
-    enemy.rigidBody.setNextKinematicTranslation(
-      new RAPIER.Vector3(pos.x, pos.y + bodyH, pos.z),
-    );
+  setPlayerCollider(collider: RAPIER.Collider): void {
+    this.playerCollider = collider;
   }
 
-  /** Alert nearby enemies when one spots the player */
-  propagateAlert(sourceEnemy: EnemyBase): void {
-    if (sourceEnemy.alertCooldown > 0) return;
-    sourceEnemy.alertCooldown = 2;
+  /** If you have separate logic for player shots, call this from weapon code too. */
+  notifyPlayerFired(): void {
+    this.playerFiredRecently = true;
+    this.playerFiredTimer = 0.25;
+  }
 
-    for (const enemy of this.enemies) {
-      if (enemy === sourceEnemy || enemy.dead) continue;
-      const dist = enemy.group.position.distanceTo(sourceEnemy.group.position);
-      if (dist <= ALERT_PROPAGATION_RANGE) {
-        const state = enemy.stateMachine.currentName;
-        if (state === 'idle') {
-          enemy.lastKnownPlayerPos = sourceEnemy.lastKnownPlayerPos?.clone() ?? null;
-          enemy.stateMachine.transition('alert', enemy);
+  spawnEnemy(spawn: EnemySpawn): EnemyObject {
+    const id = spawn.id ?? `enemy_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
+    const variant = spawn.variant ?? DEFAULT_VARIANT;
+    const adjusted = this.findNonOverlappingSpawn(spawn.x, spawn.z, spawn.roomBounds);
+
+    // ✅ Find ground
+    const feetY = this.getGroundFeetY(adjusted.x, spawn.y, adjusted.z);
+
+    const enemy = new EnemyBase(this.physics, variant, adjusted.x, feetY, adjusted.z, spawn.roomBounds);
+
+    // facing
+    if (typeof spawn.facingAngle === 'number') {
+      enemy.group.rotation.y = spawn.facingAngle;
+    }
+
+    // attach helpers to enemy object used by states (non-schema)
+    (enemy as any).id = id;
+    enemy.waypoints = spawn.waypoints ?? [];
+    enemy.firstShotDelay = (spawn.firstShotDelay ?? 0) + Math.random() * 0.35;
+    if (Number.isFinite(spawn.health)) {
+      const health = Math.max(1, Number(spawn.health));
+      enemy.maxHealth = health;
+      enemy.health = health;
+    }
+    if (Number.isFinite(spawn.speed)) {
+      enemy.moveSpeed = Math.max(0.5, Number(spawn.speed) * ENEMY_SPEED_SCALE);
+    }
+    enemy.moveSpeed *= 0.9 + Math.random() * 0.2;
+
+    // State machine setup
+    enemy.stateMachine.addState(createIdleState(this));
+    enemy.stateMachine.addState(createPatrolState(this));
+    enemy.stateMachine.addState(createAlertState(this));
+    enemy.stateMachine.addState(createAttackState(this));
+    enemy.stateMachine.addState(createDeadState());
+    (enemy as any)._perception = {
+      canSeePlayer: false,
+      canHearPlayer: false,
+      distanceToPlayer: Number.POSITIVE_INFINITY,
+      directionToPlayer: new THREE.Vector3(0, 0, 1),
+    };
+    enemy.stateMachine.transition('patrol', enemy);
+
+    // Track + add to scene
+    this.enemies.push(enemy);
+    this.scene.add(enemy.group);
+
+    this.enemyByColliderHandle.set(enemy.collider.handle, enemy);
+
+    return enemy;
+  }
+
+  private findNonOverlappingSpawn(
+    x: number,
+    z: number,
+    roomBounds?: { minX: number; maxX: number; minZ: number; maxZ: number },
+  ): { x: number; z: number } {
+    const minDist = 2.0;
+    const minDistSq = minDist * minDist;
+    const maxAttempts = 12;
+
+    const clampToRoom = (valueX: number, valueZ: number): { x: number; z: number } => {
+      if (!roomBounds) return { x: valueX, z: valueZ };
+      return {
+        x: Math.min(roomBounds.maxX, Math.max(roomBounds.minX, valueX)),
+        z: Math.min(roomBounds.maxZ, Math.max(roomBounds.minZ, valueZ)),
+      };
+    };
+
+    const clampedStart = clampToRoom(x, z);
+    let candidateX = clampedStart.x;
+    let candidateZ = clampedStart.z;
+    for (let i = 0; i < maxAttempts; i++) {
+      let overlaps = false;
+      for (const e of this.enemies) {
+        if (e.dead) continue;
+        const dx = candidateX - e.group.position.x;
+        const dz = candidateZ - e.group.position.z;
+        if ((dx * dx + dz * dz) < minDistSq) {
+          overlaps = true;
+          break;
         }
       }
+      if (!overlaps) return { x: candidateX, z: candidateZ };
+
+      const angle = Math.random() * Math.PI * 2;
+      const radius = minDist * (0.8 + Math.random() * 0.8);
+      const candidate = clampToRoom(
+        clampedStart.x + Math.cos(angle) * radius,
+        clampedStart.z + Math.sin(angle) * radius,
+      );
+      candidateX = candidate.x;
+      candidateZ = candidate.z;
     }
+
+    return clampedStart;
   }
 
-  /** Fire at the player from an enemy (called by attack state) */
-  enemyFireAtPlayer(enemy: EnemyBase): void {
-    const enemyPos = enemy.getHeadPosition();
-    const dir = new THREE.Vector3()
-      .subVectors(this.playerPos, enemyPos)
-      .normalize();
-
-    // Apply accuracy spread
-    dir.x += (Math.random() - 0.5) * enemy.accuracy;
-    dir.y += (Math.random() - 0.5) * enemy.accuracy * 0.5;
-    dir.z += (Math.random() - 0.5) * enemy.accuracy;
-    dir.normalize();
-
-    // Raycast to see if bullet hits player
-    const hit = this.physics.castRay(
-      enemyPos.x, enemyPos.y, enemyPos.z,
-      dir.x, dir.y, dir.z,
-      30,
-      enemy.collider,
-    );
-
-    // Visual: muzzle flash on enemy
-    this.flashEnemyMuzzle(enemyPos);
-
-    // Audio (quieter than player gunshot)
-    playGunshot();
-
-    if (hit) {
-      // Check if the hit collider is the player's
-      if (hit.collider.handle === this.playerCollider.handle) {
-        this.onPlayerHit?.(enemy.damage, enemyPos);
-      }
-    }
-  }
-
-  private flashEnemyMuzzle(pos: THREE.Vector3): void {
-    // Grab an idle light from the pool (or reuse oldest)
-    let idx = this.muzzleFlashTimers.findIndex(t => t <= 0);
-    if (idx === -1) idx = 0; // reuse first if all busy
-    const light = this.muzzleFlashPool[idx];
-    light.position.copy(pos);
-    light.intensity = 20;
-    light.visible = true;
-    this.muzzleFlashTimers[idx] = 0.06;
-  }
-
-  /** Check if a Rapier collider belongs to an enemy, and if so return that enemy */
-  getEnemyByCollider(collider: RAPIER.Collider): EnemyBase | null {
-    for (const enemy of this.enemies) {
-      if (enemy.collider.handle === collider.handle) return enemy;
-    }
-    return null;
-  }
-
-  /** Damage all living enemies within radius of center (e.g. gas cloud). */
-  damageEnemiesInRadius(center: THREE.Vector3, radius: number, damage: number): void {
-    for (const enemy of this.enemies) {
-      if (enemy.dead) continue;
-      const dist = enemy.group.position.distanceTo(center);
-      if (dist <= radius) {
-        enemy.takeDamage(damage);
-        if (enemy.dead) {
-          this.removeEnemyPhysics(enemy);
-          this.events.emit('enemy:killed', {
-            position: enemy.group.position.clone(),
-          });
-        }
-      }
-    }
-  }
-
-  /** Compute a repulsion force pushing enemy away from nearby allies to prevent overlap. */
-  private readonly _repulsion = new THREE.Vector3();
-  private readonly _diff = new THREE.Vector3();
-  private static readonly MIN_SEPARATION = 1.5;
-
-  getRepulsionForce(enemy: EnemyBase): THREE.Vector3 {
-    this._repulsion.set(0, 0, 0);
-    const pos = enemy.group.position;
-    for (const other of this.enemies) {
-      if (other === enemy || other.dead) continue;
-      this._diff.subVectors(pos, other.group.position);
-      this._diff.y = 0;
-      const dist = this._diff.length();
-      if (dist < EnemyManager.MIN_SEPARATION && dist > 0.01) {
-        // Inverse-distance repulsion: closer = stronger
-        this._diff.normalize().multiplyScalar((EnemyManager.MIN_SEPARATION - dist) / EnemyManager.MIN_SEPARATION);
-        this._repulsion.add(this._diff);
-      }
-    }
-    return this._repulsion;
-  }
-
-  /** Remove an enemy's physics body and collider so the player can walk through corpses. Call when enemy dies. */
-  removeEnemyPhysics(enemy: EnemyBase): void {
-    try {
-      this.physics.removeCollider(enemy.collider, true);
-      this.physics.removeRigidBody(enemy.rigidBody);
-    } catch {
-      // Already removed or invalid
-    }
-  }
-
-  update(dt: number): void {
-    // Update player fired timer
-    if (this.playerFiredTimer > 0) {
+  /** Called BEFORE physics.step() each fixed tick */
+  fixedUpdate(dt: number): void {
+    // update gunshot “hearing” timer
+    if (this.playerFiredRecently) {
       this.playerFiredTimer -= dt;
       if (this.playerFiredTimer <= 0) {
         this.playerFiredRecently = false;
+        this.playerFiredTimer = 0;
       }
     }
 
-    // Fade pooled muzzle flash lights
-    for (let i = 0; i < this.muzzleFlashPool.length; i++) {
-      if (this.muzzleFlashTimers[i] > 0) {
-        this.muzzleFlashTimers[i] -= dt;
-        if (this.muzzleFlashTimers[i] <= 0) {
-          this.muzzleFlashPool[i].visible = false;
-          this.muzzleFlashPool[i].intensity = 0;
-        } else {
-          this.muzzleFlashPool[i].intensity = (this.muzzleFlashTimers[i] / 0.06) * 20;
-        }
-      }
+    // 1) Mutate bodies first (state updates may call move/stop).
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      e.stateMachine.update(e, dt);
     }
 
-    // Update all enemies
+    this.applyEnemySeparation();
+
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      e.applyMovement(dt);
+    }
+
+    // 2) Run physics queries after all mutations and cache for next tick.
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const perception = perceivePlayer(
+        e,
+        this.playerPos,
+        this.playerCollider as any,
+        this.physics,
+        this.playerMoving,
+        this.playerFiredRecently
+      );
+      (e as any)._perception = perception;
+      if (perception.canSeePlayer) {
+        e.lookAt(this.playerPos);
+      }
+    }
+  }
+
+  /** Called AFTER physics.step() each fixed tick */
+  syncFromPhysics(): void {
+    for (const e of this.enemies) {
+      e.syncFromPhysics();
+    }
+  }
+
+  /** Visual-only update (anim, muzzle flash timers, etc.) */
+  update(dt: number): void {
     for (let i = this.enemies.length - 1; i >= 0; i--) {
-      const enemy = this.enemies[i];
-      enemy.update(dt, this.cameraPos);
+      const e = this.enemies[i];
+      e.update(dt);
+      if (e.isReadyToDespawn()) {
+        this.removeEnemyPhysics(e);
+        this.scene.remove(e.group);
+        this.enemies.splice(i, 1);
+      }
+    }
+  }
 
-      // Remove dead enemies after delay
-      if (enemy.dead) {
-        if (enemy.deathTimer > DEAD_REMOVAL_TIME) {
-          this.scene.remove(enemy.group);
-          // Note: we leave the physics body for now (it sinks below floor)
-          this.enemies.splice(i, 1);
+  getPerception(enemy: EnemyObject): PerceptionResult | null {
+    return ((enemy as any)._perception as PerceptionResult) ?? null;
+  }
+
+  propagateAlert(source: EnemyObject): void {
+    const srcPos = source.group.position;
+    const ALERT_RADIUS = 10;
+
+    for (const e of this.enemies) {
+      if (e === source || e.dead) continue;
+      const dx = e.group.position.x - srcPos.x;
+      const dz = e.group.position.z - srcPos.z;
+      if (dx * dx + dz * dz <= ALERT_RADIUS * ALERT_RADIUS) {
+        // do not spam transitions if already attacking
+        if (e.stateMachine.currentName !== 'attack') {
+          e.lastKnownPlayerPos = this.playerPos.clone();
+          e.stateMachine.transition('alert', e);
         }
       }
     }
   }
 
-  get aliveCount(): number {
-    return this.enemies.filter((e) => !e.dead).length;
+  enemyFireAtPlayer(enemy: EnemyObject): void {
+    // You can add hit chance / ray to player here.
+    // Keep it simple: damage player if enemy is in attack state and perception says can see.
+    const p = this.getPerception(enemy);
+    if (!p?.canSeePlayer) return;
+
+    // simple accuracy / “roll”
+    const dist = p.distanceToPlayer;
+    const baseHitChance = 0.8;
+    const distPenalty = Math.min(0.4, dist / 25);
+    const spreadPenalty = Math.min(0.4, enemy.accuracy * 2);
+    const hitChance = Math.max(0.25, baseHitChance - distPenalty - spreadPenalty);
+
+    if (Math.random() <= hitChance) {
+      this.onPlayerHit?.(enemy.damage);
+    }
   }
 
-  get totalCount(): number {
-    return this.enemies.length;
+  getEnemyByCollider(collider: RAPIER.Collider): EnemyObject | null {
+    return this.enemyByColliderHandle.get(collider.handle) ?? null;
+  }
+
+  getEnemyByColliderHandle(colliderHandle: number): EnemyObject | null {
+    return this.enemyByColliderHandle.get(colliderHandle) ?? null;
+  }
+
+  removeEnemyPhysics(enemy: EnemyObject): void {
+    // Remove collider/body so player doesn’t snag
+    try {
+      this.physics.removeCollider(enemy.collider, true);
+    } catch {}
+    try {
+      const body = enemy.getRigidBody();
+      if (body) this.physics.removeRigidBody(body);
+    } catch {}
+
+    this.enemyByColliderHandle.delete(enemy.collider.handle);
+  }
+
+  damageEnemiesInRadius(position: THREE.Vector3, radius: number, damage: number): void {
+    const r2 = radius * radius;
+    for (const e of this.enemies) {
+      if (e.dead) continue;
+      const dx = e.group.position.x - position.x;
+      const dy = e.group.position.y - position.y;
+      const dz = e.group.position.z - position.z;
+      const d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 <= r2) {
+        const falloff = 1 - Math.sqrt(d2) / radius;
+        e.takeDamage(damage * falloff);
+        if (e.dead) {
+          this.removeEnemyPhysics(e);
+        }
+      }
+    }
+  }
+
+  /**
+   * ✅ Robust ground placement.
+   * This is the function you were asking about — it’s in EnemyManager.
+   */
+  private getGroundFeetY(x: number, yHint: number, z: number): number {
+    const startY = yHint + SPAWN_RAY_START_ABOVE;
+
+    const hit = this.physics.castRay(
+      x,
+      startY,
+      z,
+      0,
+      -1,
+      0,
+      SPAWN_RAY_LEN,
+    );
+
+    if (!hit) {
+      console.warn(
+        `[EnemyManager] No ground hit at (${x.toFixed(2)},${yHint.toFixed(2)},${z.toFixed(2)}). ` +
+          `Ray from y=${startY.toFixed(2)} to ${(startY - SPAWN_RAY_LEN).toFixed(2)}. Using yHint.`
+      );
+      return yHint;
+    }
+
+    // direction is (0,-1,0): hitY = startY - toi
+    const feetY = startY - hit.toi + FEET_EPS;
+    return feetY;
+  }
+
+  private applyEnemySeparation(): void {
+    const n = this.enemies.length;
+    const sepVx = new Array<number>(n).fill(0);
+    const sepVz = new Array<number>(n).fill(0);
+    const minSepSq = ENEMY_MIN_SEPARATION * ENEMY_MIN_SEPARATION;
+
+    for (let i = 0; i < n; i++) {
+      const a = this.enemies[i];
+      if (!a || a.dead) continue;
+      for (let j = i + 1; j < n; j++) {
+        const b = this.enemies[j];
+        if (!b || b.dead) continue;
+
+        const dx = a.group.position.x - b.group.position.x;
+        const dz = a.group.position.z - b.group.position.z;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= minSepSq) continue;
+
+        const d = Math.sqrt(Math.max(0.000001, d2));
+        const overlap = ENEMY_MIN_SEPARATION - d;
+        let nx = dx / d;
+        let nz = dz / d;
+        if (!Number.isFinite(nx) || !Number.isFinite(nz)) {
+          nx = Math.random() > 0.5 ? 1 : -1;
+          nz = 0;
+        }
+
+        const force = overlap * ENEMY_SEPARATION_STRENGTH;
+        sepVx[i] += nx * force;
+        sepVz[i] += nz * force;
+        sepVx[j] -= nx * force;
+        sepVz[j] -= nz * force;
+      }
+    }
+
+    for (let i = 0; i < n; i++) {
+      const e = this.enemies[i];
+      if (!e || e.dead) continue;
+      e.setSeparationVelocity(sepVx[i], sepVz[i]);
+    }
   }
 }

@@ -7,84 +7,119 @@ import {
   woodCrateTexture,
   metalCrateTexture,
   barrelTexture,
-} from '../levels/procedural-textures';
+} from '../levels/utils/procedural-textures';
 
 /**
  * CCTV Background System
  * Creates a panning camera feed from the quick play level to use as menu background.
  */
 export class CCTVBackground {
-  private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
-  private renderer: THREE.WebGLRenderer;
+  private scene!: THREE.Scene;
+  private camera!: THREE.PerspectiveCamera;
+  private renderer!: THREE.WebGLRenderer;
   private renderTarget: THREE.WebGLRenderTarget;
   private panAngle = 0;
-  private panRadius = 7; // Reduced to keep camera inside 20x20 room (walls at ±10)
-  private panHeight = 2.5; // Lowered for better viewing angle and to avoid ceiling
-  private panSpeed = 0.3; // radians per second
+  private panRadius = 7; // Keep camera inside 20x20 room (walls at ±10)
+  private panHeight = 2.5; // Good viewing angle
+  private panSpeed = 0.15; // radians per second (slower rotation)
   private animationId: number | null = null;
   private resizeHandler: () => void;
+  private lastFrameTime = 0;
 
   constructor(physics: PhysicsWorld) {
-    // Create renderer canvas (will be positioned as background)
-    const canvas = document.createElement('canvas');
-    canvas.id = 'cctv-render-canvas';
-    // Start with window dimensions - will be updated on resize
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    canvas.style.position = 'fixed';
-    canvas.style.top = '0';
-    canvas.style.left = '0';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.zIndex = '1';
-    canvas.style.objectFit = 'cover';
-    document.body.appendChild(canvas);
-    
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
-
-    // Create render target for off-screen rendering (not used currently, but kept for potential future use)
-    // Use window dimensions, will be updated on resize if needed
-    this.renderTarget = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, {
-      minFilter: THREE.LinearFilter,
-      magFilter: THREE.LinearFilter,
-      format: THREE.RGBAFormat,
-    });
-
-    // Create scene
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x1a1a2e);
-    this.scene.fog = new THREE.Fog(0x1a1a2e, 15, 40);
-
-    // Build the test scene (same as quick play)
-    this.buildTestScene(physics);
-
-    // Create panning camera - aspect ratio will be set by resize handler
-    this.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 50);
-    this.updateCameraPosition();
-
-    // Handle window resize - fill entire viewport (after camera is created)
-    this.resizeHandler = () => {
-      // Render at full window size to fill viewport
-      const renderWidth = window.innerWidth;
-      const renderHeight = window.innerHeight;
+    try {
+      console.log('[CCTV] Initializing CCTV background...');
       
-      this.renderer.setSize(renderWidth, renderHeight);
-      this.camera.aspect = renderWidth / renderHeight;
-      this.camera.updateProjectionMatrix();
+      // Create renderer canvas
+      const canvas = document.createElement('canvas');
+      canvas.id = 'cctv-render-canvas';
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      canvas.style.position = 'fixed';
+      canvas.style.top = '0';
+      canvas.style.left = '0';
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+      canvas.style.zIndex = '1';
+      canvas.style.objectFit = 'cover';
+      canvas.style.display = 'block';
+      canvas.style.pointerEvents = 'none'; // Allow clicks to pass through
+      document.body.insertBefore(canvas, document.body.firstChild);
       
-      // Update render target size if needed (for potential future use)
-      if (this.renderTarget.width !== renderWidth || this.renderTarget.height !== renderHeight) {
-        this.renderTarget.setSize(renderWidth, renderHeight);
-      }
-    };
-    window.addEventListener('resize', this.resizeHandler);
-    this.resizeHandler();
+      console.log('[CCTV] Creating WebGL renderer...');
+      this.renderer = new THREE.WebGLRenderer({ 
+        canvas, 
+        antialias: true,
+        alpha: false,
+        powerPreference: 'high-performance'
+      });
+      
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2)); // Limit for performance
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFShadowMap;
+      this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      this.renderer.toneMappingExposure = 1.15;
+      
+      console.log('[CCTV] Renderer created successfully');
+
+      // Create render target (for potential future use)
+      this.renderTarget = new THREE.WebGLRenderTarget(
+        window.innerWidth, 
+        window.innerHeight, 
+        {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+        }
+      );
+
+      console.log('[CCTV] Creating scene...');
+      // Create scene
+      this.scene = new THREE.Scene();
+      this.scene.background = new THREE.Color(0x1a1a2e);
+      this.scene.fog = new THREE.Fog(0x1a1a2e, 15, 40);
+
+      console.log('[CCTV] Building test scene...');
+      // Build the test scene
+      this.buildTestScene(physics);
+
+      console.log('[CCTV] Setting up camera...');
+      // Create panning camera
+      this.camera = new THREE.PerspectiveCamera(
+        60, 
+        window.innerWidth / window.innerHeight, 
+        0.1, 
+        50
+      );
+      this.updateCameraPosition();
+
+      // Handle window resize
+      this.resizeHandler = () => {
+        if (!this.renderer || !this.camera) return;
+        
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        
+        this.renderer.setSize(width, height);
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        
+        // Update render target size
+        this.renderTarget.setSize(width, height);
+      };
+      
+      window.addEventListener('resize', this.resizeHandler);
+      
+      // Initial resize
+      this.resizeHandler();
+      
+      console.log('[CCTV] CCTV background initialized successfully');
+    } catch (error) {
+      console.error('[CCTV] Error initializing CCTV background:', error);
+      this.cleanup();
+      throw error;
+    }
   }
 
   private buildTestScene(physics: PhysicsWorld): void {
@@ -97,6 +132,8 @@ export class CCTVBackground {
     pointLight.position.set(0, 4.5, 0);
     pointLight.castShadow = true;
     pointLight.shadow.mapSize.set(512, 512);
+    pointLight.shadow.camera.near = 0.5;
+    pointLight.shadow.camera.far = 15;
     this.scene.add(pointLight);
 
     // Secondary lights in corners
@@ -110,6 +147,7 @@ export class CCTVBackground {
 
     // Materials — procedural Canvas textures
     const floorTex = floorTileTexture();
+    floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
     floorTex.repeat.set(5, 5);
     const floorMat = new THREE.MeshStandardMaterial({
       map: floorTex,
@@ -118,6 +156,7 @@ export class CCTVBackground {
     });
 
     const wallTex = concreteWallTexture();
+    wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
     wallTex.repeat.set(4, 1);
     const wallMat = new THREE.MeshStandardMaterial({
       map: wallTex,
@@ -126,6 +165,7 @@ export class CCTVBackground {
     });
 
     const ceilTex = ceilingPanelTexture();
+    ceilTex.wrapS = ceilTex.wrapT = THREE.RepeatWrapping;
     ceilTex.repeat.set(5, 5);
     const ceilingMat = new THREE.MeshStandardMaterial({
       map: ceilTex,
@@ -166,6 +206,7 @@ export class CCTVBackground {
       ceilingMat,
     );
     ceiling.position.set(0, ROOM_H + 0.1, 0);
+    ceiling.receiveShadow = true;
     this.scene.add(ceiling);
     physics.createStaticCuboid(ROOM_W / 2, 0.1, ROOM_D / 2, 0, ROOM_H + 0.1, 0);
 
@@ -184,6 +225,7 @@ export class CCTVBackground {
       );
       wallMesh.position.set(x, y, z);
       wallMesh.receiveShadow = true;
+      wallMesh.castShadow = true;
       this.scene.add(wallMesh);
       physics.createStaticCuboid(hx, hy, hz, x, y, z);
     }
@@ -201,7 +243,10 @@ export class CCTVBackground {
     ];
 
     for (const c of crateData) {
-      const crate = new THREE.Mesh(new THREE.BoxGeometry(c.w, c.h, c.d), c.mat);
+      const crate = new THREE.Mesh(
+        new THREE.BoxGeometry(c.w, c.h, c.d), 
+        c.mat
+      );
       crate.position.set(c.x, c.y, c.z);
       crate.castShadow = true;
       crate.receiveShadow = true;
@@ -215,11 +260,13 @@ export class CCTVBackground {
       roughness: 0.5,
       metalness: 0.3,
     });
-    const barrelPositions = [
+    
+    const barrelPositions: [number, number, number][] = [
       [6, 0.6, -4],
       [6.8, 0.6, -3.5],
       [-2, 0.6, -8],
     ];
+    
     for (const [bx, by, bz] of barrelPositions) {
       const barrel = new THREE.Mesh(
         new THREE.CylinderGeometry(0.4, 0.4, 1.2, 8),
@@ -241,71 +288,152 @@ export class CCTVBackground {
     this.camera.lookAt(0, 1.5, 0); // Look at center of room, slightly above floor
   }
 
-  private animate = (): void => {
-    if (this.animationId === null) return;
+  private animate = (currentTime: number): void => {
+    try {
+      if (this.animationId === null) return;
 
-    // Update pan angle
-    this.panAngle += this.panSpeed * 0.016; // ~60fps
-    this.updateCameraPosition();
+      // Calculate delta time (capped at 100ms to prevent huge jumps)
+      const deltaTime = this.lastFrameTime 
+        ? Math.min((currentTime - this.lastFrameTime) / 1000, 0.1)
+        : 0.016;
+      this.lastFrameTime = currentTime;
 
-    // Render directly to canvas (visible background)
-    this.renderer.setRenderTarget(null);
-    this.renderer.render(this.scene, this.camera);
+      // Update pan angle with delta time for smooth rotation
+      this.panAngle += this.panSpeed * deltaTime;
+      
+      // Keep angle in reasonable range
+      if (this.panAngle > Math.PI * 2) {
+        this.panAngle -= Math.PI * 2;
+      }
+      
+      this.updateCameraPosition();
 
-    this.animationId = requestAnimationFrame(this.animate);
+      // Render directly to canvas
+      this.renderer.setRenderTarget(null);
+      this.renderer.render(this.scene, this.camera);
+
+      this.animationId = requestAnimationFrame(this.animate);
+    } catch (error) {
+      console.error('[CCTV] Error in animation loop:', error);
+      this.stop();
+    }
   };
 
   /**
    * Start the CCTV animation loop.
    */
   start(): void {
-    if (this.animationId !== null) return;
-    this.animationId = requestAnimationFrame(this.animate);
+    try {
+      console.log('[CCTV] Starting animation...');
+      
+      if (this.animationId !== null) {
+        console.log('[CCTV] Animation already running');
+        return;
+      }
+      
+      // Ensure canvas is visible
+      const canvas = this.renderer?.domElement;
+      if (canvas) {
+        canvas.style.display = 'block';
+        canvas.style.visibility = 'visible';
+        console.log('[CCTV] Canvas made visible');
+      }
+      
+      // Reset frame time
+      this.lastFrameTime = 0;
+      
+      // Start animation loop
+      this.animationId = requestAnimationFrame(this.animate);
+      console.log('[CCTV] Animation started successfully');
+    } catch (error) {
+      console.error('[CCTV] Failed to start animation:', error);
+    }
   }
 
   /**
    * Stop the CCTV animation loop.
    */
   stop(): void {
-    if (this.animationId !== null) {
-      cancelAnimationFrame(this.animationId);
-      this.animationId = null;
+    try {
+      console.log('[CCTV] Stopping animation...');
+      
+      if (this.animationId !== null) {
+        cancelAnimationFrame(this.animationId);
+        this.animationId = null;
+        this.lastFrameTime = 0;
+        console.log('[CCTV] Animation stopped');
+      }
+    } catch (error) {
+      console.error('[CCTV] Error stopping animation:', error);
     }
   }
 
   /**
-   * Get the texture from the render target.
+   * Hide the CCTV canvas without stopping the animation.
+   */
+  hide(): void {
+    const canvas = this.renderer?.domElement;
+    if (canvas) {
+      canvas.style.display = 'none';
+    }
+  }
+
+  /**
+   * Show the CCTV canvas.
+   */
+  show(): void {
+    const canvas = this.renderer?.domElement;
+    if (canvas) {
+      canvas.style.display = 'block';
+      canvas.style.visibility = 'visible';
+    }
+  }
+
+  /**
+   * Clean up resources (internal helper).
+   */
+  private cleanup(): void {
+    try {
+      const canvas = document.getElementById('cctv-render-canvas');
+      if (canvas) {
+        canvas.remove();
+      }
+      
+      if (this.renderTarget) {
+        this.renderTarget.dispose();
+      }
+      
+      if (this.renderer) {
+        this.renderer.dispose();
+      }
+    } catch (error) {
+      console.error('[CCTV] Error during cleanup:', error);
+    }
+  }
+
+  /**
+   * Dispose of all resources.
+   */
+  dispose(): void {
+    try {
+      console.log('[CCTV] Disposing CCTV background...');
+      
+      this.stop();
+      
+      window.removeEventListener('resize', this.resizeHandler);
+      
+      this.cleanup();
+      
+      console.log('[CCTV] CCTV background disposed');
+    } catch (error) {
+      console.error('[CCTV] Error disposing resources:', error);
+    }
+  }
+
+  /**
+   * Get the render target texture (for advanced use cases).
    */
   getTexture(): THREE.Texture {
     return this.renderTarget.texture;
-  }
-
-  /**
-   * Get the renderer's canvas element (for displaying the feed).
-   */
-  getCanvas(): HTMLCanvasElement {
-    return this.renderer.domElement;
-  }
-
-  /**
-   * Get the render target (for reading pixels).
-   */
-  getRenderTarget(): THREE.WebGLRenderTarget {
-    return this.renderTarget;
-  }
-
-  /**
-   * Dispose of resources.
-   */
-  dispose(): void {
-    this.stop();
-    window.removeEventListener('resize', this.resizeHandler);
-    const canvas = document.getElementById('cctv-render-canvas');
-    if (canvas) {
-      canvas.remove();
-    }
-    this.renderTarget.dispose();
-    this.renderer.dispose();
-    // Note: We don't dispose the scene/physics as they're shared
   }
 }

@@ -67,27 +67,54 @@ export interface SpawnDef {
   x: number;
   y: number;
   z: number;
+  /** Facing angle in radians (0 = looking along positive Z) */
+  facingAngle?: number;
 }
 
 export interface EnemySpawnDef {
+  id: string;
+  type: 'guard' | 'soldier' | 'officer';
   x: number;
   y: number;
   z: number;
+  /** ID of the room this enemy is in */
+  roomId: string;
   facingAngle: number;
+  health: number;
+  speed: number;
+  alertRadius: number;
+  fov: number;
   /** Optional patrol waypoints (x, z). Enemy walks between these when idle. */
   waypoints?: { x: number; z: number }[];
-  /** Optional variant: 'guard', 'soldier', 'officer'. Default: 'guard'. */
-  variant?: string;
+  /** Enemy variant type (same as type, kept for backward compatibility) */
+  variant?: 'guard' | 'soldier' | 'officer';
+  /** Full variant data for enemy appearance */
+  variantData?: {
+    uniformColor: string;
+    vestColor: string;
+    skinTone: string;
+    headgear: string;
+    name: string;
+  };
 }
 
 export interface PickupSpawnDef {
+  /** Unique identifier for the pickup */
+  id: string;
+  /** Type of pickup ('key', 'weapon-pistol', 'weapon-rifle', 'ammo-pistol', 'ammo-rifle', 'health', 'armor') */
   type: string;
+  /** X position in world space */
   x: number;
+  /** Y position in world space */
   y: number;
+  /** Z position in world space */
   z: number;
+  /** Number of items (for ammo, health, etc.) */
   amount?: number;
   /** For key pickups: key id (e.g. 'red', 'blue') */
   keyId?: string;
+  /** Optional room ID where this pickup is located */
+  roomId?: string;
 }
 
 export interface ObjectiveDef {
@@ -111,6 +138,10 @@ export interface TriggerDef {
   onEnter: string;
   /** One-shot (fire once) or repeat */
   once?: boolean;
+  /** List of objective IDs that must be completed before this trigger becomes active */
+  requireObjectives?: string[];
+  /** Whether this trigger is the level exit */
+  isExit?: boolean;
 }
 
 export interface PropLoot {
@@ -118,15 +149,31 @@ export interface PropLoot {
   amount?: number;
 }
 
+export type PropType = 
+  | 'crate' 
+  | 'barrel' 
+  | 'crate_metal' 
+  | 'crate_wood' 
+  | 'crate_ammo' 
+  | 'crate_medical' 
+  | 'barrel_metal' 
+  | 'barrel_toxic' 
+  | 'barrel_explosive'
+  | 'crate_explosive'
+  | 'weapon_pistol'
+  | 'weapon_rifle'
+  | 'weapon_shotgun';
+
 export interface PropDef {
-  type: 'crate' | 'barrel' | 'crate_metal';
+  type: PropType;
   x: number;
   y: number;
   z: number;
-  /** Optional scale */
   scale?: number;
-  /** Optional Y-axis rotation (radians) */
   rotY?: number;
-  /** Loot dropped when destroyed */
-  loot?: PropLoot;
+  health?: number;
+  loot?: {
+    type: string;
+    amount: number;
+  };
 }

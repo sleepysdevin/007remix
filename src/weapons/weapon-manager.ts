@@ -41,6 +41,7 @@ export class WeaponManager {
     shotgun: 'default',
     sniper: 'default',
   };
+  private prebuiltWeaponPool: Partial<Record<WeaponType, WeaponBase>> = {};
 
   constructor(
     scene: THREE.Scene,
@@ -61,6 +62,7 @@ export class WeaponManager {
 
     // Start with pistol
     this.weapons[0] = new Pistol();
+    this.prewarmWeaponInstances();
   }
 
   get currentWeapon(): WeaponBase {
@@ -80,6 +82,13 @@ export class WeaponManager {
       return false;
     }
 
+    const pooled = this.prebuiltWeaponPool[type];
+    if (pooled) {
+      this.weapons[slotIndex] = pooled;
+      delete this.prebuiltWeaponPool[type];
+      return true;
+    }
+
     switch (type) {
       case 'pistol': this.weapons[slotIndex] = new Pistol(); break;
       case 'rifle': this.weapons[slotIndex] = new Rifle(); break;
@@ -87,6 +96,13 @@ export class WeaponManager {
       case 'sniper': this.weapons[slotIndex] = new Sniper(); break;
     }
     return true;
+  }
+
+  private prewarmWeaponInstances(): void {
+    // Prime constructor/JIT paths to remove first pickup hitch.
+    this.prebuiltWeaponPool.rifle = new Rifle();
+    this.prebuiltWeaponPool.shotgun = new Shotgun();
+    this.prebuiltWeaponPool.sniper = new Sniper();
   }
 
   addAmmo(type: 'pistol' | 'rifle' | 'shotgun' | 'sniper', amount: number): void {
@@ -223,7 +239,7 @@ export class WeaponManager {
     const weapon = this.currentWeapon;
     const spreadMult = this._scoped ? 0.1 : 1;
 
-    let firstHit: { point?: THREE.Vector3; collider?: RAPIER.Collider } | null = null;
+    let firstHit: { point?: THREE.Vector3; colliderHandle?: number } | null = null;
     for (let i = 0; i < weapon.stats.raysPerShot; i++) {
       let dir = direction;
       if (weapon.stats.raysPerShot > 1) {
@@ -243,8 +259,8 @@ export class WeaponManager {
       const result = this.projectileSystem.fireRay(origin, dir, weapon, this.playerCollider);
 
       // Store first hit for network sync (Phase 3)
-      if (!firstHit && result.hit && result.collider) {
-        firstHit = { point: result.point, collider: result.collider };
+      if (!firstHit && result.hit && typeof result.colliderHandle === 'number') {
+        firstHit = { point: result.point, colliderHandle: result.colliderHandle };
       }
     }
 

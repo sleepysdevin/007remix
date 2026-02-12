@@ -18,6 +18,7 @@ const FRAG_EXPLOSION_RADIUS = 4;
 const FRAG_EXPLOSION_DAMAGE = 80;
 const FRAG_EXPLOSION_DURATION = 0.5;
 const FRAG_EXPLOSION_SIZE = 6;
+const EXPLOSION_POOL_SIZE = 12;
 
 export type GrenadeType = 'gas' | 'frag';
 
@@ -48,11 +49,21 @@ interface GasCloud {
 
 interface ActiveExplosion {
   mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  texture: THREE.Texture;
+  poolIndex: number;
   position: THREE.Vector3;
   radius: number;
   damageDealt: boolean;
   elapsed: number;
   duration: number;
+}
+
+interface PooledExplosion {
+  mesh: THREE.Mesh;
+  material: THREE.MeshBasicMaterial;
+  texture: THREE.Texture;
+  inUse: boolean;
 }
 
 export class GrenadeSystem {
@@ -72,6 +83,8 @@ export class GrenadeSystem {
   private clouds: GasCloud[] = [];
   private explosions: ActiveExplosion[] = [];
   private explosionTexture: THREE.Texture | null = null;
+  private explosionPlaneGeo: THREE.PlaneGeometry | null = null;
+  private explosionPool: PooledExplosion[] = [];
   private readonly _rayOrigin = new THREE.Vector3();
   private readonly _groundNormal = new THREE.Vector3(0, -1, 0);
   private readonly _cameraPosition = new THREE.Vector3();
@@ -79,6 +92,24 @@ export class GrenadeSystem {
   constructor(scene: THREE.Scene, physics: PhysicsWorld) {
     this.scene = scene;
     this.physics = physics;
+  }
+
+  /** Pre-create heavy explosion assets to avoid first-use hitch. */
+  prewarmEffects(): void {
+    this.ensureExplosionPool();
+    const warm = this.acquireExplosion();
+    if (!warm) return;
+    warm.mesh.position.set(0, -9999, 0);
+    this.scene.add(warm.mesh);
+    this.scene.remove(warm.mesh);
+    const slot = this.explosionPool[warm.poolIndex];
+    slot.inUse = false;
+    slot.texture.offset.set(0, 0);
+    slot.material.opacity = 1;
+
+    // Warm full runtime path (sprite frame stepping + callback path) offscreen.
+    this.spawnExplosion(new THREE.Vector3(0, -9999, 0));
+    this.update(FRAG_EXPLOSION_DURATION + 0.01);
   }
 
   setEnemyManager(manager: EnemyManager): void {
@@ -120,26 +151,20 @@ export class GrenadeSystem {
 
   /** Spawn a frag explosion at the given position. Public so barrel explosions can reuse visuals. */
   spawnExplosion(at: THREE.Vector3): void {
-    if (!this.explosionTexture) {
-      this.explosionTexture = generateExplosionTexture();
-    }
-    const tex = this.explosionTexture.clone();
-    tex.repeat.set(1 / EXPLOSION_FRAMES, 1);
-    const geo = new THREE.PlaneGeometry(FRAG_EXPLOSION_SIZE, FRAG_EXPLOSION_SIZE);
-    const mat = new THREE.MeshBasicMaterial({
-      map: tex,
-      transparent: true,
-      opacity: 1,
-      side: THREE.DoubleSide,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const mesh = new THREE.Mesh(geo, mat);
+    const pooled = this.acquireExplosion();
+    if (!pooled) return;
+    const { mesh, material, texture, poolIndex } = pooled;
+
+    texture.offset.set(0, 0);
+    material.opacity = 1;
     mesh.position.copy(at);
     this.scene.add(mesh);
 
     this.explosions.push({
       mesh,
+      material,
+      texture,
+      poolIndex,
       position: at.clone(),
       radius: FRAG_EXPLOSION_RADIUS,
       damageDealt: false,
@@ -256,6 +281,46 @@ export class GrenadeSystem {
     return 0;
   }
 
+  private ensureExplosionPool(): void {
+    if (!this.explosionTexture) {
+      this.explosionTexture = generateExplosionTexture();
+    }
+    if (!this.explosionPlaneGeo) {
+      this.explosionPlaneGeo = new THREE.PlaneGeometry(FRAG_EXPLOSION_SIZE, FRAG_EXPLOSION_SIZE);
+    }
+    while (this.explosionPool.length < EXPLOSION_POOL_SIZE) {
+      const tex = this.explosionTexture.clone();
+      tex.repeat.set(1 / EXPLOSION_FRAMES, 1);
+      tex.offset.set(0, 0);
+      tex.needsUpdate = true;
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const mesh = new THREE.Mesh(this.explosionPlaneGeo, mat);
+      mesh.frustumCulled = false;
+      this.explosionPool.push({ mesh, material: mat, texture: tex, inUse: false });
+    }
+  }
+
+  private acquireExplosion():
+    | { mesh: THREE.Mesh; material: THREE.MeshBasicMaterial; texture: THREE.Texture; poolIndex: number }
+    | null {
+    this.ensureExplosionPool();
+    for (let i = 0; i < this.explosionPool.length; i++) {
+      const slot = this.explosionPool[i];
+      if (!slot.inUse) {
+        slot.inUse = true;
+        return { mesh: slot.mesh, material: slot.material, texture: slot.texture, poolIndex: i };
+      }
+    }
+    return null;
+  }
+
   update(dt: number, camera?: THREE.Camera): void {
     // Update thrown grenades
     for (let i = this.thrown.length - 1; i >= 0; i--) {
@@ -353,17 +418,19 @@ export class GrenadeSystem {
         EXPLOSION_FRAMES - 1,
       );
       const offset = getExplosionOffset(frameIndex);
-      (e.mesh.material as THREE.MeshBasicMaterial).map!.offset.set(offset.x, offset.y);
-      (e.mesh.material as THREE.MeshBasicMaterial).opacity = 1 - t * 0.7;
+      e.texture.offset.set(offset.x, offset.y);
+      e.material.opacity = 1 - t * 0.7;
       if (camera) {
         e.mesh.lookAt(this._cameraPosition);
       }
       if (e.elapsed >= e.duration) {
-        const m = e.mesh.material as THREE.MeshBasicMaterial;
-        if (m.map) m.map.dispose();
-        e.mesh.geometry.dispose();
-        m.dispose();
         this.scene.remove(e.mesh);
+        const slot = this.explosionPool[e.poolIndex];
+        if (slot) {
+          slot.inUse = false;
+          slot.texture.offset.set(0, 0);
+          slot.material.opacity = 1;
+        }
         this.explosions.splice(i, 1);
       }
     }

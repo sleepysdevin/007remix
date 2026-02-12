@@ -12,7 +12,7 @@ const GEOS = {
   vest: new THREE.BoxGeometry(0.36, 0.4, 0.2),
   belt: new THREE.BoxGeometry(0.38, 0.06, 0.2),
   head: new THREE.BoxGeometry(0.22, 0.22, 0.22),
-  eye: new THREE.BoxGeometry(0.04, 0.04, 0.02),
+  eye: new THREE.BoxGeometry(0.05, 0.05, 0.01),
   upperArm: new THREE.BoxGeometry(0.1, 0.2, 0.1),
   lowerArm: new THREE.BoxGeometry(0.08, 0.18, 0.08),
   hand: new THREE.BoxGeometry(0.06, 0.06, 0.06),
@@ -78,11 +78,17 @@ function getMetalMat(key: string, color: number): THREE.MeshStandardMaterial {
   return m;
 }
 
-function parseColor(hex: string): number {
+function parseColor(hex: string | undefined): number {
+  if (!hex) {
+    console.warn('[parseColor] Undefined color provided, using default 0xff0000');
+    return 0xff0000; // Default red color for missing values
+  }
   return parseInt(hex.replace('#', ''), 16);
 }
 
 export function createGuardModel(variant: GuardVariant): GuardModelResult {
+  console.log('[createGuardModel] Starting guard model creation for variant:', variant);
+  
   const uniformColor = parseColor(variant.uniformColor);
   const vestColor = parseColor(variant.vestColor);
   const skinTone = parseColor(variant.skinTone);
@@ -94,9 +100,11 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   // Scale to human height (~1.75m) — base model is ~1.45m
   const MODEL_SCALE = 1.2;
   rootGroup.scale.setScalar(MODEL_SCALE);
+  console.log('[createGuardModel] Model scale set to:', MODEL_SCALE);
 
-  // Foot-to-ground offset: feet are ~0.37 from origin, scaled
-  rootGroup.position.y = -0.37 * MODEL_SCALE;
+  // Offset so boot bottoms touch y=0 at rest pose.
+  // Boot bottom is at y≈0.40 in model space; after 1.2x scale = 0.48 in parent space.
+  rootGroup.position.y = -0.48;
 
   // Hips at waist height
   const hips = new THREE.Group();
@@ -112,6 +120,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const torsoMesh = new THREE.Mesh(GEOS.torso, torsoMat);
   (torsoMesh.userData as Record<string, number>).originalColor = torsoMat.color.getHex();
   torsoMesh.position.set(0, 0, 0);
+  torsoMesh.castShadow = true;
+  torsoMesh.receiveShadow = true;
   torso.add(torsoMesh);
   hitFlashMeshes.push(torsoMesh);
 
@@ -119,6 +129,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const vestMesh = new THREE.Mesh(GEOS.vest, vestMat);
   (vestMesh.userData as Record<string, number>).originalColor = vestMat.color.getHex();
   vestMesh.position.set(0, 0.02, 0);
+  vestMesh.castShadow = true;
+  vestMesh.receiveShadow = true;
   torso.add(vestMesh);
   hitFlashMeshes.push(vestMesh);
 
@@ -146,29 +158,53 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const headMesh = new THREE.Mesh(GEOS.head, headMat);
   (headMesh.userData as Record<string, number>).originalColor = headMat.color.getHex();
   headMesh.position.set(0, 0.17, 0);  // head above neck (0.06 + 0.22/2)
+  headMesh.castShadow = true;
+  headMesh.receiveShadow = true;
   head.add(headMesh);
   hitFlashMeshes.push(headMesh);
 
-  const leftEye = new THREE.Mesh(GEOS.eye, getMat('eye', 0x111111));
-  leftEye.position.set(-0.04, 0.13, 0.1);
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  const leftEye = new THREE.Mesh(GEOS.eye, eyeMat);
+  leftEye.position.set(-0.04, 0.13, 0.115);
   head.add(leftEye);
-  const rightEye = new THREE.Mesh(GEOS.eye, getMat('eye', 0x111111));
-  rightEye.position.set(0.04, 0.13, 0.1);
+  const rightEye = new THREE.Mesh(GEOS.eye, eyeMat);
+  rightEye.position.set(0.04, 0.13, 0.115);
   head.add(rightEye);
 
   // Headgear — raised so they sit on top of head, not covering face
   const headgearMat = getMat('headgear', 0x3d4242);
   if (variant.headgear === 'helmet' || variant.headgear === 'helmet_net') {
     const helmet = new THREE.Mesh(GEOS.helmet, headgearMat);
-    helmet.position.set(0, 0.26, 0);  // raised — sits on crown, not over face
+    helmet.position.set(0, 0.32, 0);  // clear head top to avoid z-fighting/flicker
+    helmet.castShadow = true;
+    helmet.receiveShadow = true;
+    helmet.frustumCulled = false;
+    const helmetMat = helmet.material as THREE.MeshStandardMaterial;
+    helmetMat.polygonOffset = true;
+    helmetMat.polygonOffsetFactor = -1;
+    helmetMat.polygonOffsetUnits = -1;
     head.add(helmet);
   } else if (variant.headgear === 'cap') {
     const cap = new THREE.Mesh(GEOS.cap, getMat('cap', 0x1e1e26));
-    cap.position.set(0, 0.24, 0);
+    cap.position.set(0, 0.285, 0);
+    cap.castShadow = true;
+    cap.receiveShadow = true;
+    cap.frustumCulled = false;
+    const capMat = cap.material as THREE.MeshStandardMaterial;
+    capMat.polygonOffset = true;
+    capMat.polygonOffsetFactor = -1;
+    capMat.polygonOffsetUnits = -1;
     head.add(cap);
   } else if (variant.headgear === 'beret') {
     const beret = new THREE.Mesh(GEOS.beret, getMat('beret', 0x4a2a2a));
-    beret.position.set(0, 0.24, 0.02);
+    beret.position.set(0, 0.285, 0.02);
+    beret.castShadow = true;
+    beret.receiveShadow = true;
+    beret.frustumCulled = false;
+    const beretMat = beret.material as THREE.MeshStandardMaterial;
+    beretMat.polygonOffset = true;
+    beretMat.polygonOffsetFactor = -1;
+    beretMat.polygonOffsetUnits = -1;
     head.add(beret);
   }
 
@@ -181,6 +217,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const leftUpperArm = new THREE.Mesh(GEOS.upperArm, leftArmMat);
   (leftUpperArm.userData as Record<string, number>).originalColor = leftArmMat.color.getHex();
   leftUpperArm.position.set(0, -0.1, 0);
+  leftUpperArm.castShadow = true;
+  leftUpperArm.receiveShadow = true;
   leftShoulder.add(leftUpperArm);
   hitFlashMeshes.push(leftUpperArm);
 
@@ -205,6 +243,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const rightUpperArm = new THREE.Mesh(GEOS.upperArm, rightArmMat);
   (rightUpperArm.userData as Record<string, number>).originalColor = rightArmMat.color.getHex();
   rightUpperArm.position.set(0, -0.1, 0);
+  rightUpperArm.castShadow = true;
+  rightUpperArm.receiveShadow = true;
   rightShoulder.add(rightUpperArm);
   hitFlashMeshes.push(rightUpperArm);
 
@@ -220,17 +260,7 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   rightHand.position.set(0, -0.18, 0);
   rightElbow.add(rightHand);
 
-  // Enemy rifle
-  const weaponAttach = new THREE.Group();
-  weaponAttach.position.set(0, -0.18, -0.08);
-  rightElbow.add(weaponAttach);
-
-  const receiver = new THREE.Mesh(GEOS.rifleReceiver, getMetalMat('rifle', darkColor));
-  receiver.position.set(0, 0, -0.1);
-  weaponAttach.add(receiver);
-  const barrel = new THREE.Mesh(GEOS.rifleBarrel, getMetalMat('rifle', darkColor));
-  barrel.position.set(0, 0, -0.27);
-  weaponAttach.add(barrel);
+  // Weapon is attached by EnemyModel on a stable aiming pivot.
 
   // Legs — connect at waist (hips origin); leg swing uses Z axis for forward/back
   const leftHip = new THREE.Group();
@@ -241,6 +271,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const leftUpperLeg = new THREE.Mesh(GEOS.upperLeg, leftLegMat);
   (leftUpperLeg.userData as Record<string, number>).originalColor = leftLegMat.color.getHex();
   leftUpperLeg.position.set(0, -0.125, 0);
+  leftUpperLeg.castShadow = true;
+  leftUpperLeg.receiveShadow = true;
   leftHip.add(leftUpperLeg);
   hitFlashMeshes.push(leftUpperLeg);
 
@@ -265,6 +297,8 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   const rightUpperLeg = new THREE.Mesh(GEOS.upperLeg, rightLegMat);
   (rightUpperLeg.userData as Record<string, number>).originalColor = rightLegMat.color.getHex();
   rightUpperLeg.position.set(0, -0.125, 0);
+  rightUpperLeg.castShadow = true;
+  rightUpperLeg.receiveShadow = true;
   rightHip.add(rightUpperLeg);
   hitFlashMeshes.push(rightUpperLeg);
 
@@ -280,6 +314,7 @@ export function createGuardModel(variant: GuardVariant): GuardModelResult {
   rightBoot.position.set(0, -0.22, 0.02);
   rightKnee.add(rightBoot);
 
+  console.log('[createGuardModel] Guard model creation completed successfully');
   return {
     rootGroup,
     joints: {

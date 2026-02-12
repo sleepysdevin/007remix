@@ -1,12 +1,13 @@
 import * as THREE from 'three';
-import { PhysicsWorld } from '../core/physics-world';
+import { PhysicsWorld } from '../../core/physics-world';
 import type { LevelSchema, RoomDef, PropDef, DoorDef } from './level-schema';
-import { DoorSystem } from './door-system';
-import { TriggerSystem } from './trigger-system';
-import { ObjectiveSystem } from './objective-system';
-import { EnemyManager } from '../enemies/enemy-manager';
-import { PickupSystem } from '../levels/pickup-system';
-import { DestructibleSystem } from './destructible-system';
+import { DoorSystem } from '../systems/door-system';
+import { TriggerSystem } from '../systems/trigger-system';
+import { ObjectiveSystem } from '../systems/objective-system';
+import { EnemyManager } from '../../enemies/enemy-manager';
+import { GUARD_VARIANTS } from '../../enemies/sprite/guard-sprite-sheet';
+import { PickupSystem } from '../systems/pickup-system';
+import { DestructibleSystem } from '../systems/destructible-system';
 import {
   concreteWallTexture,
   floorTileTexture,
@@ -14,7 +15,7 @@ import {
   woodCrateTexture,
   metalCrateTexture,
   barrelTexture,
-} from './procedural-textures';
+} from "../utils/procedural-textures";
 
 const WALL_THICKNESS = 0.2;
 
@@ -45,20 +46,51 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
     setPlayerPosition,
   } = deps;
 
-  // Lights — positioned INSIDE rooms (below ceiling at y≈2.0)
-  const ambient = new THREE.AmbientLight(0x8899aa, 2.5); // Increased from 1.8
+  // Base ambient light with slight variation
+  const ambient = new THREE.AmbientLight(0x8899aa, 1.8 + Math.random() * 0.7);
   scene.add(ambient);
 
-  // Hemisphere light for natural indoor fill (warm from above, cool from floor bounce)
-  const hemi = new THREE.HemisphereLight(0xddeeff, 0x445544, 1.2); // Increased from 0.9
+  // Hemisphere light with more variation
+  const hemi = new THREE.HemisphereLight(
+    0xddeeff, 0x445544, 
+    0.8 + Math.random() * 0.8  // Intensity between 0.8-1.6
+  );
   scene.add(hemi);
 
-  // Point lights per room — dynamically placed at room centers
+  // Point lights per room with variations
   for (const room of level.rooms) {
-    const pointLight = new THREE.PointLight(0xffeedd, 120, 30); // Increased intensity from 80, distance from 25
-    pointLight.position.set(room.x, 1.5, room.z); // Center of each room at y=1.5
+    // Randomize light position within room (not perfectly centered)
+    const x = room.x + (Math.random() - 0.5) * room.width * 0.6;
+    const z = room.z + (Math.random() - 0.5) * room.depth * 0.6;
+    
+    // Randomize intensity (80-160) and distance (20-40)
+    const intensity = 80 + Math.random() * 80;
+    const distance = 20 + Math.random() * 20;
+    
+    // Slight color variation
+    const color = new THREE.Color(0xffeedd)
+      .offsetHSL(0, 0, (Math.random() - 0.5) * 0.1);
+    
+    const pointLight = new THREE.PointLight(color, intensity, distance);
+    pointLight.position.set(x, 1.5, z);
     pointLight.castShadow = true;
     pointLight.shadow.mapSize.set(512, 512);
+    pointLight.shadow.bias = -0.001; // Reduce shadow acne
+    
+    // Add some random flicker to some lights (20% chance)
+    if (Math.random() < 0.2) {
+      const baseIntensity = intensity;
+      const flickerSpeed = 0.5 + Math.random() * 2;
+      const flickerAmount = 0.1 + Math.random() * 0.2;
+      
+      const flicker = (timestamp: number) => {
+        const flickerVal = Math.sin(timestamp * 0.001 * flickerSpeed) * flickerAmount + 1;
+        pointLight.intensity = baseIntensity * (0.9 + flickerVal * 0.1);
+        requestAnimationFrame(flicker);
+      };
+      requestAnimationFrame(flicker);
+    }
+    
     scene.add(pointLight);
   }
 
@@ -70,7 +102,7 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
   const floorMat = (color = 0x888888) => {
     const tex = floorTex.clone();
     tex.needsUpdate = true;
-    tex.repeat.set(3, 3);
+    tex.repeat.set(5, 5); // Match quickplay style
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     return new THREE.MeshStandardMaterial({ map: tex, color, roughness: 0.8, metalness: 0.2 });
@@ -78,7 +110,7 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
   const wallMat = (color = 0x999999) => {
     const tex = wallTex.clone();
     tex.needsUpdate = true;
-    tex.repeat.set(3, 1);
+    tex.repeat.set(4, 1); // Match quickplay style
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     return new THREE.MeshStandardMaterial({ map: tex, color, roughness: 0.7, metalness: 0.1 });
@@ -86,7 +118,7 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
   const ceilingMat = (_color = 0x888888) => {
     const tex = ceilTex.clone();
     tex.needsUpdate = true;
-    tex.repeat.set(3, 3);
+    tex.repeat.set(5, 5); // Match quickplay style
     tex.wrapS = THREE.RepeatWrapping;
     tex.wrapT = THREE.RepeatWrapping;
     return new THREE.MeshStandardMaterial({ map: tex, color: _color, roughness: 0.9, metalness: 0 });
@@ -109,19 +141,72 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
     }
   }
 
-  // Player spawn
+  // Rapier's query pipeline needs a step() to index newly-created colliders.
+  // Without this, castRay misses floors/walls that were just built above.
+  physics.step();
+
+  // Player spawn (IMPORTANT: PlayerController.setPosition expects FEET Y)
   const { x: px, y: py, z: pz } = level.playerSpawn;
-  setPlayerPosition(px, py, pz);
+
+  // IMPORTANT: start INSIDE the room (below ceiling). A value of 1.5 above
+  // py keeps the ray origin below the ceiling for rooms with height >= 3.
+  // Starting too high (e.g. 30) hits the ceiling first and places player on top of it.
+  const RAY_START_ABOVE = 1.5;
+  const RAY_LEN = 10;
+  const FEET_EPS = 0.06; // Must be > floor thickness jitter and ground-ray eps
+
+  const startY = py + RAY_START_ABOVE;
+
+  const hit = physics.castRay(
+    px, startY, pz,
+    0, -1, 0,
+    RAY_LEN,
+    undefined
+  );
+
+  if (hit) {
+    // Rapier ray hit point y = startY - toi (because dir is -Y)
+    const groundY = startY - hit.toi;
+
+    // Pass FEET y into player setter
+    setPlayerPosition(px, groundY + FEET_EPS, pz);
+  } else {
+    console.warn(`[LevelBuilder] No ground hit for player at (${px.toFixed(2)},${py.toFixed(2)},${pz.toFixed(2)}). Using schema y (FEET).`);
+    setPlayerPosition(px, py, pz); // assume schema y is feet-y (may be wrong)
+  }
 
   // Enemies (with optional waypoints for patrol, variant for appearance)
+  console.log(`[LevelBuilder] Spawning ${level.enemies.length} enemies`);
   for (const e of level.enemies) {
+    console.log(`[LevelBuilder] Spawning enemy ${e.id} at (${e.x}, ${e.y}, ${e.z})`);
+    
+    // Convert string variant to full GuardVariant object
+    const variant = e.variant ? GUARD_VARIANTS[e.variant] : undefined;
+
+    const room = level.rooms.find((r) => r.id === e.roomId);
+    const roomEdgePadding = 0.85;
+    const roomBounds = room
+      ? {
+          minX: room.x - room.width / 2 + roomEdgePadding,
+          maxX: room.x + room.width / 2 - roomEdgePadding,
+          minZ: room.z - room.depth / 2 + roomEdgePadding,
+          maxZ: room.z + room.depth / 2 - roomEdgePadding,
+        }
+      : undefined;
+    
+    // Convert waypoints from {x, z} to {x, y, z} format
+    const waypoints = e.waypoints?.map(wp => ({ x: wp.x, y: e.y, z: wp.z }));
+    
     enemyManager.spawnEnemy({
       x: e.x,
       y: e.y,
       z: e.z,
       facingAngle: e.facingAngle,
-      waypoints: e.waypoints,
-      variant: e.variant,
+      health: e.health,
+      speed: e.speed,
+      waypoints,
+      variant,
+      roomBounds,
     });
   }
 
@@ -138,7 +223,11 @@ export function buildLevel(level: LevelSchema, deps: LevelBuilderDeps): void {
   // Triggers — also place extraction marker at mission:complete trigger
   for (const t of level.triggers) {
     triggerSystem.addTrigger(t);
-    if (t.onEnter === 'mission:complete') {
+    const hasMissionComplete = t.onEnter
+      .split(',')
+      .map((cmd) => cmd.trim())
+      .includes('mission:complete');
+    if (hasMissionComplete) {
       buildExtractionMarker(scene, t.x, t.y, t.z);
     }
   }
@@ -286,7 +375,7 @@ function buildProp(
   const scale = prop.scale ?? 1;
   const { x, y, z } = prop;
 
-  if (prop.type === 'crate' || prop.type === 'crate_metal') {
+  if (prop.type === 'crate' || prop.type === 'crate_metal' || prop.type === 'crate_wood') {
     const isMetal = prop.type === 'crate_metal';
     const mat = new THREE.MeshStandardMaterial({
       map: isMetal ? metalCrateTexture() : woodCrateTexture(),
@@ -301,12 +390,15 @@ function buildProp(
     mesh.receiveShadow = true;
     scene.add(mesh);
     const collider = physics.createStaticCuboid(size / 2, size / 2, size / 2, x, y + size / 2, z);
-    destructible.register(mesh, collider, prop.type, undefined, size, prop.loot);
-  } else if (prop.type === 'barrel') {
+    const destructibleType = prop.type === 'crate_wood' ? 'crate' : prop.type;
+    destructible.register(mesh, collider, destructibleType, undefined, size, prop.loot);
+  } else if (prop.type === 'barrel' || prop.type === 'barrel_metal' || prop.type === 'barrel_explosive') {
+    const isExplosive = prop.type === 'barrel_explosive';
     const mat = new THREE.MeshStandardMaterial({
       map: barrelTexture(),
-      roughness: 0.5,
-      metalness: 0.3,
+      roughness: isExplosive ? 0.3 : 0.5,
+      metalness: isExplosive ? 0.1 : 0.3,
+      color: isExplosive ? new THREE.Color(0xff4444) : undefined, // Red tint for explosive barrels
     });
     const mesh = new THREE.Mesh(
       new THREE.CylinderGeometry(0.4 * scale, 0.4 * scale, 1.2 * scale, 12),
@@ -316,7 +408,13 @@ function buildProp(
     mesh.castShadow = true;
     scene.add(mesh);
     const collider = physics.createStaticCuboid(0.4 * scale, 0.6 * scale, 0.4 * scale, x, y + 0.6 * scale, z);
-    destructible.register(mesh, collider, 'barrel', undefined, 0.8 * scale, prop.loot);
+    const destructibleType = prop.type === 'barrel_explosive' || prop.type === 'barrel_metal' ? 'barrel' : prop.type;
+    destructible.register(mesh, collider, destructibleType, undefined, 0.8 * scale, prop.loot);
+  } else if (prop.type.startsWith('weapon_')) {
+    // Weapons are pickups, not destructible props - they should be handled by pickup system
+    console.log(`[buildProp] Weapon ${prop.type} should be handled as pickup, not prop`);
+  } else {
+    console.warn(`[buildProp] Unknown prop type: ${prop.type}`);
   }
 }
 

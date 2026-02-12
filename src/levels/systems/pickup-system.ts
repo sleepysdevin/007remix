@@ -4,7 +4,7 @@ import {
   armorTexture,
   ammoTexture,
   keyTexture,
-} from './pickup-textures';
+} from "../utils/pickup-textures";
 
 export type PickupType =
   | 'health'
@@ -101,8 +101,8 @@ export class PickupSystem {
   }
 
   update(dt: number, playerPos: THREE.Vector3): void {
-    for (const pickup of this.pickups) {
-      if (pickup.collected) continue;
+    for (let i = this.pickups.length - 1; i >= 0; i--) {
+      const pickup = this.pickups[i];
 
       // Bob and rotate
       pickup.bobPhase += dt * 3;
@@ -117,10 +117,10 @@ export class PickupSystem {
       // Check collection distance
       const dist = playerPos.distanceTo(pickup.mesh.position);
       if (dist < COLLECT_RADIUS) {
-        pickup.collected = true;
-        if (pickup.light) pickup.light.dispose();
+        if (pickup.light) pickup.mesh.remove(pickup.light);
         this.scene.remove(pickup.mesh);
         this.onPickupCollected?.(pickup.type, pickup.amount, pickup.keyId);
+        this.pickups.splice(i, 1);
       }
     }
   }

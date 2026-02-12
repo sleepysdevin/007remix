@@ -1,30 +1,35 @@
 import type { State } from '../state-machine';
-import type { EnemyBase } from '../../enemy-base';
+import type { EnemyObject } from '../../enemy-manager';
 import type { EnemyManager } from '../../enemy-manager';
 
 /**
  * Idle state: enemy stands at post, slowly looks around.
  * Transitions to 'alert' if player is seen or heard.
  */
-export function createIdleState(manager: EnemyManager): State<EnemyBase> {
-  let lookTimer = 0;
-  let baseFacing = 0;
+export function createIdleState(manager: EnemyManager): State<EnemyObject> {
+  const state = new WeakMap<EnemyObject, { lookTimer: number; baseFacing: number }>();
 
   return {
     name: 'idle',
 
     enter(enemy) {
-      lookTimer = 2 + Math.random() * 3;
-      baseFacing = enemy.facingAngle;
+      state.set(enemy, {
+        lookTimer: 2 + Math.random() * 3,
+        baseFacing: enemy.group.rotation.y,
+      });
       enemy.model.play('idle');
     },
 
     update(enemy, dt) {
+      const s = state.get(enemy);
+      if (!s) return;
+
       // Slowly look around
-      lookTimer -= dt;
-      if (lookTimer <= 0) {
-        lookTimer = 2 + Math.random() * 3;
-        enemy.targetFacingAngle = baseFacing + (Math.random() - 0.5) * 1.2;
+      s.lookTimer -= dt;
+      if (s.lookTimer <= 0) {
+        s.lookTimer = 2 + Math.random() * 3;
+        const targetFacing = s.baseFacing + (Math.random() - 0.5) * 1.2;
+        enemy.group.rotation.y = targetFacing;
       }
 
       // Check perception
@@ -36,10 +41,12 @@ export function createIdleState(manager: EnemyManager): State<EnemyBase> {
         enemy.stateMachine.transition('attack', enemy);
       } else if (perception.canHearPlayer) {
         enemy.lastKnownPlayerPos = manager.getPlayerPosition().clone();
-        enemy.stateMachine.transition('alert', enemy);
+        enemy.stateMachine.transition('attack', enemy);
       }
     },
 
-    exit() {},
+    exit(enemy) {
+      state.delete(enemy);
+    },
   };
 }

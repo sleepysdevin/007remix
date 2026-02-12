@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { PhysicsWorld } from '../core/physics-world';
-import { globalLightPool } from '../core/light-pool';
+import { PhysicsWorld } from '../../core/physics-world';
+import { globalLightPool } from "../../core/light-pool";
 
 /**
  * Destructible prop system — crates and barrels take damage from gunfire and explosions.
@@ -9,10 +9,13 @@ import { globalLightPool } from '../core/light-pool';
  * Barrels trigger a secondary explosion dealing area damage.
  */
 
-const DEBRIS_COUNT = 4; // Reduced from 6 for better performance
+const DEBRIS_COUNT = 2; // Aggressive reduction to minimize explosion hitch
 const DEBRIS_LIFETIME = 1.2; // Reduced from 1.8
 const DEBRIS_GRAVITY = -12;
 const BARREL_FLASH_DURATION = 0.25; // Reduced from 0.35
+const BARREL_FLASH_POOL_SIZE = 8;
+const BARREL_FLASH_COLOR = 0xff8800;
+const BARREL_FLASH_GEO = new THREE.SphereGeometry(1.2, 6, 4);
 
 // Shared debris geometries (reused by all debris chunks to avoid per-chunk allocation)
 const SHARED_DEBRIS_GEOS: THREE.BoxGeometry[] = [];
@@ -59,7 +62,7 @@ function getDebrisMats(type: string): THREE.MeshBasicMaterial[] {
 const DEFAULT_HEALTH: Record<string, number> = {
   crate: 30,
   crate_metal: 70,
-  barrel: 20,
+  barrel: 12,
 };
 
 // Barrel explosion properties - reduced for performance
@@ -96,9 +99,13 @@ interface Debris {
 interface BarrelFlash {
   light: THREE.PointLight;
   flash: THREE.Mesh;
-  mat: THREE.MeshBasicMaterial;
-  geo: THREE.SphereGeometry;
   elapsed: number;
+}
+
+interface PendingExplosionDamage {
+  center: THREE.Vector3;
+  radius: number;
+  damage: number;
 }
 
 export class DestructibleSystem {
@@ -107,6 +114,9 @@ export class DestructibleSystem {
   private props: DestructibleProp[] = [];
   private debris: Debris[] = [];
   private barrelFlashes: BarrelFlash[] = [];
+  private flashMeshPool: THREE.Mesh[] = [];
+  private pendingExplosionDamage: PendingExplosionDamage[] = [];
+  private pendingDispose: THREE.Object3D[] = [];
 
   // Reusable vector
   private readonly _tmpVec = new THREE.Vector3();
@@ -135,6 +145,58 @@ export class DestructibleSystem {
   constructor(scene: THREE.Scene, physics: PhysicsWorld) {
     this.scene = scene;
     this.physics = physics;
+    this.prewarmFlashPool();
+  }
+
+  /** Prewarm first-use barrel explosion objects to reduce first-hit hitch. */
+  prewarmBarrelExplosionPath(): void {
+    const light = globalLightPool.acquire(0xff6600, 60, 8);
+    this.scene.add(light);
+    this.scene.remove(light);
+    globalLightPool.release(light);
+
+    const flash = this.acquireFlashMesh();
+    flash.frustumCulled = false;
+    flash.position.set(0, -9999, 0);
+    this.scene.add(flash);
+    this.scene.remove(flash);
+    this.flashMeshPool.push(flash);
+
+    // Warm Rapier collider/body remove path to avoid first-destruction hitch.
+    const warmBodyDesc = RAPIER.RigidBodyDesc.fixed();
+    warmBodyDesc.setTranslation(0, -9999, 0);
+    const warmBody = this.physics.world.createRigidBody(warmBodyDesc);
+    const warmCollider = this.physics.world.createCollider(RAPIER.ColliderDesc.ball(0.1), warmBody);
+    this.physics.removeCollider(warmCollider);
+    this.physics.removeRigidBody(warmBody);
+  }
+
+  private prewarmFlashPool(): void {
+    while (this.flashMeshPool.length < BARREL_FLASH_POOL_SIZE) {
+      const mat = new THREE.MeshBasicMaterial({
+        color: BARREL_FLASH_COLOR,
+        transparent: true,
+        opacity: 0.9,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+      });
+      const flash = new THREE.Mesh(BARREL_FLASH_GEO, mat);
+      this.flashMeshPool.push(flash);
+    }
+  }
+
+  private acquireFlashMesh(): THREE.Mesh {
+    if (this.flashMeshPool.length > 0) {
+      return this.flashMeshPool.pop()!;
+    }
+    const mat = new THREE.MeshBasicMaterial({
+      color: BARREL_FLASH_COLOR,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    return new THREE.Mesh(BARREL_FLASH_GEO, mat);
   }
 
   /** Register a destructible prop. Returns the prop for chaining. */
@@ -215,12 +277,7 @@ export class DestructibleSystem {
    */
   private removeSilent(prop: DestructibleProp): void {
     this.scene.remove(prop.mesh);
-    prop.mesh.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        if (child.material instanceof THREE.Material) child.material.dispose();
-      }
-    });
+    this.pendingDispose.push(prop.mesh);
     const body = prop.collider.parent();
     this.physics.removeCollider(prop.collider);
     if (body) this.physics.removeRigidBody(body);
@@ -233,8 +290,8 @@ export class DestructibleSystem {
     if (prop.health <= 0) return;
     prop.health -= amount;
 
-    // Brief red flash on hit
-    this.flashMesh(prop.mesh);
+    // Avoid heavy flash work on barrels, which are often hit in chain explosions.
+    if (prop.type !== 'barrel') this.flashMesh(prop.mesh);
 
     if (prop.health <= 0) {
       this.destroy(prop);
@@ -280,35 +337,38 @@ export class DestructibleSystem {
     // Notify for networking (before removal)
     this.onPropDestroyedFull?.(prop);
 
+    // Trigger barrel explosion effects immediately so it feels instant on hit.
+    if (prop.type === 'barrel') {
+      this.spawnBarrelFlash(prop.position);
+      this.onBarrelExplode?.(prop.position, BARREL_EXPLOSION_RADIUS, BARREL_EXPLOSION_DAMAGE);
+      this.pendingExplosionDamage.push({
+        center: prop.position.clone(),
+        radius: BARREL_EXPLOSION_RADIUS,
+        damage: BARREL_EXPLOSION_DAMAGE,
+      });
+    }
+
     // Remove visual
     this.scene.remove(prop.mesh);
-    // Dispose geometry+material on the mesh
-    prop.mesh.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        if (child.material instanceof THREE.Material) child.material.dispose();
-      }
-    });
+    // Barrel disposal can stall on first hit; skip runtime disposal for barrels.
+    if (prop.type !== 'barrel') {
+      // Defer disposal to spread GPU/GC work over multiple frames.
+      this.pendingDispose.push(prop.mesh);
+    }
 
     // Remove physics body + collider
     const body = prop.collider.parent();
     this.physics.removeCollider(prop.collider);
     if (body) this.physics.removeRigidBody(body);
 
-    // Spawn debris chunks
-    this.spawnDebris(prop);
+    // Skip debris for barrels to avoid frame hitch on explosion.
+    if (prop.type !== 'barrel') {
+      this.spawnDebris(prop);
+    }
 
     // Remove from tracking list
     const idx = this.props.indexOf(prop);
     if (idx >= 0) this.props.splice(idx, 1);
-
-    // Barrel chain: spawn explosion flash + area damage
-    if (prop.type === 'barrel') {
-      this.spawnBarrelFlash(prop.position);
-      this.onBarrelExplode?.(prop.position, BARREL_EXPLOSION_RADIUS, BARREL_EXPLOSION_DAMAGE);
-      // Chain reaction: damage nearby props from barrel blast
-      this.damageInRadius(prop.position, BARREL_EXPLOSION_RADIUS, BARREL_EXPLOSION_DAMAGE);
-    }
 
     // Drop loot if defined
     if (prop.loot) {
@@ -326,26 +386,21 @@ export class DestructibleSystem {
     light.position.y += 0.5;
     this.scene.add(light);
 
-    const geo = new THREE.SphereGeometry(1.2, 6, 4);
-    const mat = new THREE.MeshBasicMaterial({
-      color: 0xff8800,
-      transparent: true,
-      opacity: 0.9,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    const flash = new THREE.Mesh(geo, mat);
+    const flash = this.acquireFlashMesh();
+    const mat = flash.material as THREE.MeshBasicMaterial;
+    mat.opacity = 0.9;
+    flash.scale.set(1, 1, 1);
     flash.position.copy(pos);
     flash.position.y += 0.3;
     this.scene.add(flash);
 
-    this.barrelFlashes.push({ light, flash, mat, geo, elapsed: 0 });
+    this.barrelFlashes.push({ light, flash, elapsed: 0 });
   }
 
   private spawnDebris(prop: DestructibleProp): void {
     const mats = getDebrisMats(prop.type);
-    // Reduce debris count for barrels to improve performance
-    const count = prop.type === 'barrel' ? DEBRIS_COUNT : DEBRIS_COUNT - 1;
+    // Keep barrel explosions cheap.
+    const count = prop.type === 'barrel' ? 1 : DEBRIS_COUNT;
     const speed = prop.type === 'barrel' ? 4 : 2; // Reduced speeds
     // Floor level = bottom of the prop (prop center minus half size)
     const floorY = prop.position.y - prop.size / 2;
@@ -392,6 +447,23 @@ export class DestructibleSystem {
 
   /** Update debris physics, barrel flashes, and cleanup. Call once per frame. */
   update(dt: number): void {
+    // Process one pending chain-explosion damage event per frame to avoid spikes.
+    if (this.pendingExplosionDamage.length > 0) {
+      const evt = this.pendingExplosionDamage.shift()!;
+      this.damageInRadius(evt.center, evt.radius, evt.damage);
+    }
+
+    // Process one deferred mesh disposal per frame to avoid big GC/GPU stalls.
+    if (this.pendingDispose.length > 0) {
+      const root = this.pendingDispose.shift()!;
+      root.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          if (child.material instanceof THREE.Material) child.material.dispose();
+        }
+      });
+    }
+
     // --- Debris ---
     for (let i = this.debris.length - 1; i >= 0; i--) {
       const d = this.debris[i];
@@ -441,14 +513,14 @@ export class DestructibleSystem {
       bf.elapsed += dt;
       const t = Math.min(1, bf.elapsed / BARREL_FLASH_DURATION);
       bf.light.intensity = 60 * (1 - t);
-      bf.mat.opacity = 0.9 * (1 - t);
+      const mat = bf.flash.material as THREE.MeshBasicMaterial;
+      mat.opacity = 0.9 * (1 - t);
       bf.flash.scale.setScalar(1 + t * 1.5);
       if (t >= 1) {
         this.scene.remove(bf.light);
         globalLightPool.release(bf.light);
         this.scene.remove(bf.flash);
-        bf.geo.dispose();
-        bf.mat.dispose();
+        this.flashMeshPool.push(bf.flash);
         this.barrelFlashes.splice(i, 1);
       }
     }

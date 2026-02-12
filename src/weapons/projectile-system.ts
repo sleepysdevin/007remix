@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import RAPIER from '@dimforge/rapier3d-compat';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsWorld } from '../core/physics-world';
 import { WeaponBase } from './weapon-base';
 
@@ -41,9 +41,9 @@ export class ProjectileSystem {
   private readonly _lookTarget = new THREE.Vector3();
 
   // Callbacks for hit detection
-  onHitCollider: ((collider: RAPIER.Collider, point: THREE.Vector3, normal: THREE.Vector3) => void) | null = null;
+  onHitCollider: ((colliderHandle: number, point: THREE.Vector3, normal: THREE.Vector3) => void) | null = null;
   /** If set, decals and impact particles are skipped when the hit collider is an enemy (avoids lingering effects on bodies). */
-  isEnemyCollider: ((collider: RAPIER.Collider) => boolean) | null = null;
+  isEnemyCollider: ((colliderHandle: number) => boolean) | null = null;
 
   constructor(scene: THREE.Scene, physics: PhysicsWorld) {
     this.scene = scene;
@@ -86,7 +86,7 @@ export class ProjectileSystem {
     direction: THREE.Vector3,
     weapon: WeaponBase,
     excludeCollider?: RAPIER.Collider,
-  ): { hit: boolean; point?: THREE.Vector3; collider?: RAPIER.Collider } {
+  ): { hit: boolean; point?: THREE.Vector3; colliderHandle?: number } {
     // Apply weapon spread using reusable vector
     this._spreadDir.copy(direction);
     if (weapon.stats.spread > 0) {
@@ -101,13 +101,17 @@ export class ProjectileSystem {
       this._spreadDir.x, this._spreadDir.y, this._spreadDir.z,
       weapon.stats.range,
       excludeCollider,
+      undefined,
+      true,
     );
 
     if (result) {
       this._hitPoint.set(result.point.x, result.point.y, result.point.z);
       this._normal.copy(this._spreadDir).negate();
 
-      const hitEnemy = this.isEnemyCollider?.(result.collider) ?? false;
+      const colliderHandle = result.colliderHandle;
+      const hasHandle = typeof colliderHandle === 'number';
+      const hitEnemy = hasHandle ? (this.isEnemyCollider?.(colliderHandle) ?? false) : false;
       if (!hitEnemy) {
         // Only leave decals and particles on walls/geometry — not on enemies (no lingering blocks)
         this.createDecal(this._hitPoint, this._normal);
@@ -115,11 +119,11 @@ export class ProjectileSystem {
       }
 
       // Notify listeners (enemy hit detection)
-      if (this.onHitCollider) {
-        this.onHitCollider(result.collider, this._hitPoint, this._normal);
+      if (hasHandle && this.onHitCollider) {
+        this.onHitCollider(colliderHandle, this._hitPoint, this._normal);
       }
 
-      return { hit: true, point: this._hitPoint.clone(), collider: result.collider };
+      return { hit: true, point: this._hitPoint.clone(), colliderHandle };
     }
 
     return { hit: false };

@@ -1,6 +1,4 @@
 // Patch Three.js Object3D to make position/rotation/quaternion/scale writable.
-// Fixes conflict with browser extensions (e.g. React DevTools) that use
-// Object.assign on Three.js objects — Object.assign fails on non-writable props.
 const _origDefineProperties = Object.defineProperties;
 Object.defineProperties = function<T>(obj: T, props: PropertyDescriptorMap & ThisType<any>): T {
   if (props.position && props.rotation && props.quaternion && props.scale) {
@@ -16,18 +14,37 @@ Object.defineProperties = function<T>(obj: T, props: PropertyDescriptorMap & Thi
 
 import { PhysicsWorld } from './core/physics-world';
 import { Game } from './game';
-import { loadLevel } from './levels/level-loader';
-import { LevelGenerator } from './levels/level-generator';
+import { loadLevel } from "./levels/types/level-loader";
+import { LevelGenerator } from './levels';
 import { CCTVBackground } from './ui/cctv-background';
 import { ScreenGlitch } from './ui/screen-glitch';
 import { NetworkManager } from './network/network-manager';
 import { LobbyScreen } from './ui/lobby-screen';
+
+function buildRandomGenerationOptions() {
+  // Vary room counts per mission so layout size/profile changes each run.
+  const minRooms = 5 + Math.floor(Math.random() * 5); // 5..9
+  const maxRooms = minRooms + 3 + Math.floor(Math.random() * 6); // min+3..min+8
+  const minEnemies = Math.max(2, Math.floor(minRooms * 0.6));
+  const maxEnemies = Math.max(minEnemies + 2, Math.floor(maxRooms * 1.4));
+  const difficulties: Array<'easy' | 'medium' | 'hard'> = ['easy', 'medium', 'hard'];
+  const difficulty = difficulties[Math.floor(Math.random() * difficulties.length)];
+  return { minRooms, maxRooms, minEnemies, maxEnemies, difficulty };
+}
 
 async function init(): Promise<void> {
   const canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
   if (!canvas) throw new Error('Canvas not found');
 
   const physics = await PhysicsWorld.create();
+  let activeGame: Game | null = null;
+
+  const activateGame = (game: Game): void => {
+    if (activeGame && activeGame !== game) {
+      activeGame.stop();
+    }
+    activeGame = game;
+  };
 
   // Create CCTV background for main menu
   const cctvPhysics = await PhysicsWorld.create();
@@ -38,7 +55,7 @@ async function init(): Promise<void> {
   const screenGlitch = new ScreenGlitch();
   screenGlitch.start();
 
-  // Helper to hide CCTV background
+  // Helper to hide CCTV background and show game canvas
   const hideCCTVBackground = () => {
     const cctvCanvas = document.getElementById('cctv-render-canvas');
     if (cctvCanvas) {
@@ -46,9 +63,12 @@ async function init(): Promise<void> {
     }
     cctvBackground.stop();
     screenGlitch.stop();
+    
+    // Show game canvas
+    canvas.style.display = 'block';
   };
 
-  // Helper to show CCTV background
+  // Helper to show CCTV background and hide game canvas
   const showCCTVBackground = () => {
     const cctvCanvas = document.getElementById('cctv-render-canvas');
     if (cctvCanvas) {
@@ -56,34 +76,18 @@ async function init(): Promise<void> {
     }
     cctvBackground.start();
     screenGlitch.start();
-  };
-
-  // Helper to create a random level game
-  const createRandomLevelGame = async () => {
-    const generator = new LevelGenerator(Date.now());
-    const level = generator.generate({
-      minRooms: 6,
-      maxRooms: 12,
-      minEnemies: 5,
-      maxEnemies: 15,
-      difficulty: 'medium'
-    });
     
-    const game = new Game(canvas, physics, { levelMode: true });
-    game.showBriefing(level);
-    game.onMissionComplete = () => {
-      document.getElementById('mission-complete')!.style.display = 'flex';
-    };
-    return game;
+    // Hide game canvas
+    canvas.style.display = 'none';
   };
 
   // Quick Play: single room, click to start
   document.getElementById('btn-quick-play')!.addEventListener('click', () => {
     const game = new Game(canvas, physics, {});
+    activateGame(game);
     document.getElementById('start-screen')!.style.display = 'none';
     hideCCTVBackground();
     game.start();
-    canvas.addEventListener('click', () => game.start());
   });
 
   // Mission: load facility, briefing, then play
@@ -97,18 +101,16 @@ async function init(): Promise<void> {
       try {
         const level = await loadLevel('/levels/facility.json');
         const game = new Game(canvas, physics, { levelMode: true });
+        activateGame(game);
+        document.getElementById('start-screen')!.style.display = 'none';
+        hideCCTVBackground();
         game.showBriefing(level);
         game.onMissionComplete = () => {
           document.getElementById('mission-complete')!.style.display = 'flex';
         };
-        canvas.addEventListener('click', () => {
-          document.getElementById('start-screen')!.style.display = 'none';
-          hideCCTVBackground();
-          game.start();
-        });
       } catch (err) {
         console.error('Mission load failed:', err);
-        btn.textContent = origText ?? 'MISSION — FACILITY';
+        btn.textContent = origText ?? 'MISSION – FACILITY';
         btn.disabled = false;
         alert('Could not load mission. Make sure you run with "npm run dev" so /levels/facility.json is served.');
       }
@@ -123,20 +125,58 @@ async function init(): Promise<void> {
       const origText = btn.textContent;
       btn.textContent = 'GENERATING...';
       btn.disabled = true;
+      
       try {
-        const game = await createRandomLevelGame();
-        canvas.addEventListener('click', () => {
-          document.getElementById('start-screen')!.style.display = 'none';
-          hideCCTVBackground();
-          game.start();
-        });
+        console.log('[Main] Generating random level...');
+        
+        // Generate with a fresh seed and varied bounds each click.
+        const seed = (Date.now() ^ Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+        const generator = new LevelGenerator(seed);
+        const level = generator.generate(buildRandomGenerationOptions());
+        
+        console.log(`[Main] Level generated: ${level.name}`);
+        console.log(`[Main] - Rooms: ${level.rooms.length}`);
+        console.log(`[Main] - Enemies: ${level.enemies.length}`);
+        console.log(`[Main] - Props: ${level.props?.length ?? 0}`);
+        console.log(`[Main] - Pickups: ${level.pickups.length}`);
+        
+        // Create game with level
+        const game = new Game(canvas, physics, { levelMode: true });
+        activateGame(game);
+        game.onMissionComplete = () => {
+          document.getElementById('mission-complete')!.style.display = 'flex';
+        };
+        
+        // Hide start screen and CCTV BEFORE showing briefing
+        const startScreen = document.getElementById('start-screen');
+        if (startScreen) {
+          startScreen.style.display = 'none';
+        }
+        hideCCTVBackground();
+        
+        // Show briefing (will be immediately visible)
+        game.showBriefing(level);
+        
+        // Reset button
+        btn.textContent = origText ?? 'RANDOM LEVEL';
+        btn.disabled = false;
+        
       } catch (err) {
+        // Show error and restore UI
         if (err instanceof Error) {
           console.error('Random level generation failed:', err.message);
           console.error(err.stack);
         } else {
           console.error('Random level generation failed:', err);
         }
+        
+        // Restore start screen and CCTV
+        const startScreen = document.getElementById('start-screen');
+        if (startScreen) {
+          startScreen.style.display = 'flex';
+        }
+        showCCTVBackground();
+        
         btn.textContent = origText ?? 'RANDOM LEVEL';
         btn.disabled = false;
         alert('Could not generate random level. Please try again.');
@@ -165,8 +205,8 @@ async function init(): Promise<void> {
               networkMode: 'client',
               networkManager,
             });
+            activateGame(game);
             game.start();
-            canvas.addEventListener('click', () => game.start());
           } catch (err) {
             console.error('[Main] Multiplayer connection failed:', err);
             lobbyScreen.setStatus('Connection failed. Is the server running? (npm run server)');
@@ -190,11 +230,28 @@ async function init(): Promise<void> {
       const origText = btn.textContent;
       btn.textContent = 'GENERATING...';
       btn.disabled = true;
+      
       try {
-        const game = await createRandomLevelGame();
-        game.start();
-        btn.textContent = origText;
+        console.log('[Main] Generating next level...');
+        
+        const seed = (Date.now() ^ Math.floor(performance.now() * 1000) ^ Math.floor(Math.random() * 0x7fffffff)) >>> 0;
+        const generator = new LevelGenerator(seed);
+        const level = generator.generate(buildRandomGenerationOptions());
+        
+        console.log(`[Main] Next level generated: ${level.name}`);
+        
+        const game = new Game(canvas, physics, { levelMode: true });
+        activateGame(game);
+        game.onMissionComplete = () => {
+          document.getElementById('mission-complete')!.style.display = 'flex';
+        };
+        
+        // Show briefing
+        game.showBriefing(level);
+        
+        btn.textContent = origText ?? 'NEXT LEVEL';
         btn.disabled = false;
+        
       } catch (err) {
         if (err instanceof Error) {
           console.error('Next level generation failed:', err.message);
@@ -202,9 +259,15 @@ async function init(): Promise<void> {
         } else {
           console.error('Next level generation failed:', err);
         }
-        btn.textContent = origText;
+        
+        btn.textContent = origText ?? 'NEXT LEVEL';
         btn.disabled = false;
         alert('Could not generate next level. Please try again.');
+        
+        // Return to menu
+        document.getElementById('mission-complete')!.style.display = 'none';
+        document.getElementById('start-screen')!.style.display = 'flex';
+        showCCTVBackground();
       }
     });
   }

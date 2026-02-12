@@ -1,43 +1,56 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 import * as THREE from 'three';
 import { InputManager } from '../core/input-manager';
-import { PhysicsWorld } from '../core/physics-world';
+import { PhysicsWorld, GROUP_PLAYER, GROUP_WORLD, GROUP_ENEMY, createCollisionFilter } from '../core/physics-world';
 import { FPSCamera } from './fps-camera';
 
 const MOVE_SPEED = 6;
 const SPRINT_MULTIPLIER = 1.65;
 const CROUCH_SPEED_MULTIPLIER = 0.4;
+
 const JUMP_VELOCITY = 5;
-const GRAVITY = -15;
+const GRAVITY = -18; // stronger than Rapier default, since we drive Y ourselves
+
 const PLAYER_RADIUS = 0.3;
 const PLAYER_HALF_HEIGHT = 0.6;
 const CROUCH_HALF_HEIGHT = 0.35;
-const EYE_HEIGHT = 1.5;       // From ground to camera when standing
-const EYE_HEIGHT_CROUCH = 0.95; // From ground when crouching
+
+const EYE_HEIGHT = 1.65;
+const EYE_HEIGHT_CROUCH = 1.0;
+
+// Grounding
+const GROUND_RAY_EPS = 0.06;        // how far above bottom to start ray
+const GROUND_RAY_LENGTH = 0.22;     // how far down to check
+const GROUND_STICK_VELOCITY = -1.2; // small downward velocity while grounded to stay pinned
 
 export class PlayerController {
-  private body: RAPIER.RigidBody;
+  private bodyHandle: number;
   private collider: RAPIER.Collider;
-  private characterController: RAPIER.KinematicCharacterController;
+
+  // We control vertical velocity ourselves (gravity/jump)
   private verticalVelocity = 0;
   private grounded = false;
+
+  // Cached position for render + other systems (avoid aliasing issues)
+  private position = new THREE.Vector3();
+  private lastPosition = new THREE.Vector3();
+  private velocity = new THREE.Vector3();
+
+  // Input state
+  private moveInput = new THREE.Vector3();
+  private jumpRequested = false;
+  private sprinting = false;
 
   health = 100;
   armor = 0;
   maxHealth = 100;
   maxArmor = 100;
 
-  /** Keys collected (e.g. 'red', 'blue') for locked doors */
   private keys = new Set<string>();
-
-  /** Dead state - prevents movement and input */
   private dead = false;
 
-  /** Crouch toggle (C key). When true, use shorter capsule and lower speed. */
   private crouching = false;
-  /** Smooth crouch transition 0 = standing, 1 = fully crouched (for camera lerp). */
   private crouchTransition = 0;
-  /** Current capsule half-height (standing or crouch). */
   private currentHalfHeight = PLAYER_HALF_HEIGHT;
 
   constructor(
@@ -49,101 +62,199 @@ export class PlayerController {
   ) {
     const { world, rapier } = physics;
 
-    // Create kinematic body
-    const bodyDesc = rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(
-      spawnX,
-      spawnY + PLAYER_HALF_HEIGHT + PLAYER_RADIUS,
-      spawnZ,
-    );
-    this.body = world.createRigidBody(bodyDesc);
+    // Dynamic body with custom gravity handling
+    const bodyDesc = rapier.RigidBodyDesc.dynamic()
+      .setTranslation(spawnX, spawnY + PLAYER_HALF_HEIGHT + PLAYER_RADIUS, spawnZ)
+      .lockRotations()
+      .setLinearDamping(0.5) // Reduced damping for more responsive movement
+      .setAngularDamping(0.5)
+      .setCcdEnabled(true) // Continuous collision detection
+      .setGravityScale(0); // We handle gravity manually
+      
+    // Create body
+    const body = world.createRigidBody(bodyDesc);
+    this.bodyHandle = body.handle;
 
-    // Capsule collider
-    const colliderDesc = rapier.ColliderDesc.capsule(
-      PLAYER_HALF_HEIGHT,
-      PLAYER_RADIUS,
-    );
-    this.collider = world.createCollider(colliderDesc, this.body);
+    // Configure collider with appropriate settings
+    const colliderDesc = rapier.ColliderDesc.capsule(PLAYER_HALF_HEIGHT, PLAYER_RADIUS)
+      .setDensity(1.0)
+      .setFriction(0.2) // Slight friction for better ground feel
+      .setRestitution(0.1) // Small bounce
+      .setActiveEvents(rapier.ActiveEvents.COLLISION_EVENTS);
 
-    // Character controller for collision response
-    this.characterController = world.createCharacterController(0.02);
-    this.characterController.enableAutostep(0.3, 0.2, true);
-    this.characterController.enableSnapToGround(0.3);
-    this.characterController.setSlideEnabled(true);
+    // Set up collision groups
+    const collisionGroups = createCollisionFilter(GROUP_PLAYER, GROUP_WORLD | GROUP_ENEMY);
+    colliderDesc.setCollisionGroups(collisionGroups);
+    colliderDesc.setSolverGroups(collisionGroups);
+
+    // Create the collider and store it
+    this.collider = world.createCollider(colliderDesc, body);
+
+    // Initialize cached position and sync with physics
+    this.syncFromPhysics();
   }
 
-  update(input: InputManager, dt: number): void {
-    // Don't process input if dead
-    if (this.dead) {
-      return;
-    }
+  /**
+   * Call this AFTER `physics.step()` (once per fixed step).
+   * It refreshes cached position safely, and keeps camera glued to the body.
+   */
+  syncFromPhysics(): void {
+    const body = this.physics.world.getRigidBody(this.bodyHandle);
+    if (!body) return;
+    const t = body.translation(); // read once
+    const x = t.x;
+    const y = t.y;
+    const z = t.z;
+    (t as any).free?.();
 
-    // Crouch toggle (C)
+    this.lastPosition.copy(this.position);
+    this.position.set(x, y, z);
+
+    const v = body.linvel();
+    this.velocity.set(v.x, v.y, v.z);
+    (v as any).free?.();
+
+    // Ground query after sync avoids query+mutation overlap in the same update path.
+    this.grounded = this.checkGrounded(x, y, z);
+
+    // Update camera position based on capsule + crouch lerp
+    const capsuleBottom = this.position.y - (this.currentHalfHeight + PLAYER_RADIUS);
+    const standEyeY = capsuleBottom + EYE_HEIGHT;
+    const crouchEyeY = capsuleBottom + EYE_HEIGHT_CROUCH;
+    const eyeY = standEyeY + (crouchEyeY - standEyeY) * this.crouchTransition;
+    this.fpsCamera.setPosition(this.position.x, eyeY, this.position.z);
+  }
+
+  updateInput(input: InputManager): void {
+    this.moveInput.set(0, 0, 0);
+    if (this.dead) return;
+
     if (input.wasKeyJustPressed('c')) {
       this.crouching = !this.crouching;
     }
-    // Apply crouch: resize collider and move body so feet stay on ground
-    this.updateCrouchState(dt);
 
+    // Get camera directions BUT flatten to XZ so looking up/down doesn’t push movement
     const forward = new THREE.Vector3();
     const right = new THREE.Vector3();
     this.fpsCamera.getForward(forward);
     this.fpsCamera.getRight(right);
 
-    const sprinting = input.isKeyDown('Shift') && !this.crouching;
-    let speed = MOVE_SPEED * (this.crouching ? CROUCH_SPEED_MULTIPLIER : sprinting ? SPRINT_MULTIPLIER : 1);
+    forward.y = 0;
+    right.y = 0;
 
-    // Compute desired horizontal movement
-    const move = new THREE.Vector3(0, 0, 0);
-    if (input.isKeyDown('w')) move.add(forward);
-    if (input.isKeyDown('s')) move.sub(forward);
-    if (input.isKeyDown('d')) move.add(right);
-    if (input.isKeyDown('a')) move.sub(right);
+    if (forward.lengthSq() > 0) forward.normalize();
+    if (right.lengthSq() > 0) right.normalize();
 
-    if (move.lengthSq() > 0) {
-      move.normalize().multiplyScalar(speed * dt);
-    }
+    if (input.isKeyDown('w')) this.moveInput.add(forward);
+    if (input.isKeyDown('s')) this.moveInput.sub(forward);
+    if (input.isKeyDown('d')) this.moveInput.add(right);
+    if (input.isKeyDown('a')) this.moveInput.sub(right);
 
-    // Vertical movement (gravity + jump). Can't jump while crouching; standing required.
-    if (this.grounded && input.isKeyDown(' ') && !this.crouching) {
-      this.verticalVelocity = JUMP_VELOCITY;
-      this.grounded = false;
-    }
+    if (this.moveInput.lengthSq() > 0) this.moveInput.normalize();
 
-    this.verticalVelocity += GRAVITY * dt;
-    move.y = this.verticalVelocity * dt;
-
-    // Run Rapier character controller
-    this.characterController.computeColliderMovement(
-      this.collider,
-      new RAPIER.Vector3(move.x, move.y, move.z),
-    );
-
-    this.grounded = this.characterController.computedGrounded();
-    if (this.grounded && this.verticalVelocity < 0) {
-      this.verticalVelocity = 0;
-    }
-
-    const corrected = this.characterController.computedMovement();
-    const pos = this.body.translation();
-    const newPos = {
-      x: pos.x + corrected.x,
-      y: pos.y + corrected.y,
-      z: pos.z + corrected.z,
-    };
-    this.body.setNextKinematicTranslation(
-      new RAPIER.Vector3(newPos.x, newPos.y, newPos.z),
-    );
-
-    // Position camera: lerp eye height between standing and crouch
-    const bodyPos = this.body.translation();
-    const capsuleBottom = bodyPos.y - (this.currentHalfHeight + PLAYER_RADIUS);
-    const standEyeY = capsuleBottom + EYE_HEIGHT;
-    const crouchEyeY = capsuleBottom + EYE_HEIGHT_CROUCH;
-    const eyeY = standEyeY + (crouchEyeY - standEyeY) * this.crouchTransition;
-    this.fpsCamera.setPosition(bodyPos.x, eyeY, bodyPos.z);
+    this.jumpRequested = input.wasKeyJustPressed(' ');
+    this.sprinting = input.isKeyDown('shift') && !this.crouching;
   }
 
-  /** Resize capsule when crouching/standing and smooth crouch transition. */
+  update(dt: number): void {
+    this.updatePhysics(dt);
+  }
+
+  updatePhysics(dt: number): void {
+    if (this.dead) return;
+
+    // Update crouch state first as it affects the collider
+    this.updateCrouchState(dt);
+
+    // Use cached values from last sync step to avoid read+mutate aliasing.
+    const currentVx = this.velocity.x;
+    const currentVz = this.velocity.z;
+
+    // Use previous frame's ground state for this step; refresh at end.
+    const wasGrounded = this.grounded;
+
+    // 2) Handle jumping and gravity
+    if (wasGrounded) {
+      // Reset vertical velocity when grounded to prevent bouncing
+      if (this.verticalVelocity <= 0) {
+        this.verticalVelocity = -0.5; // Small negative value to keep grounded
+      }
+
+      // Handle jump input
+      if (this.jumpRequested && !this.crouching) {
+        this.verticalVelocity = JUMP_VELOCITY;
+        this.grounded = false;
+      }
+    } else {
+      // Apply gravity when in air
+      this.verticalVelocity += GRAVITY * dt;
+      
+      // Apply air resistance (damping)
+      this.verticalVelocity *= Math.pow(0.99, dt * 60);
+      
+      // Terminal velocity
+      this.verticalVelocity = Math.max(-30, this.verticalVelocity);
+    }
+    this.jumpRequested = false;
+
+    // 3) Calculate movement forces
+    const speed = this.getCurrentMoveSpeed();
+    const targetVx = this.moveInput.x * speed;
+    const targetVz = this.moveInput.z * speed;
+    
+    // Get current horizontal velocity
+    // Apply acceleration based on ground/air state
+    const acceleration = wasGrounded ? 30.0 : 10.0;
+    const maxSpeedChange = acceleration * dt;
+    
+    // Smoothly interpolate towards target velocity
+    const newVx = this.moveInput.lengthSq() > 0.01 
+      ? this.lerp(currentVx, targetVx, maxSpeedChange)
+      : this.lerp(currentVx, 0, maxSpeedChange * 2); // Faster stop
+      
+    const newVz = this.moveInput.lengthSq() > 0.01
+      ? this.lerp(currentVz, targetVz, maxSpeedChange)
+      : this.lerp(currentVz, 0, maxSpeedChange * 2); // Faster stop
+
+    const finalVy =
+      wasGrounded && this.moveInput.lengthSq() > 0.01
+        ? Math.min(this.verticalVelocity, -0.1)
+        : this.verticalVelocity;
+    const body = this.physics.world.getRigidBody(this.bodyHandle);
+    if (!body) return;
+    body.setLinvel({ x: newVx, y: finalVy, z: newVz }, true);
+
+    // Keep cache coherent until next syncFromPhysics.
+    this.velocity.set(newVx, finalVy, newVz);
+
+  }
+  
+  // Helper method for smooth interpolation
+  private lerp(start: number, end: number, amount: number): number {
+    return start + (end - start) * Math.min(amount, 1.0);
+  }
+
+  private checkGrounded(x: number, y: number, z: number): boolean {
+    // Capsule bottom in world space
+    const bottomY = y - (this.currentHalfHeight + PLAYER_RADIUS);
+
+    // Ray starts slightly above bottom, points down
+    const originY = bottomY + GROUND_RAY_EPS;
+
+    const hit = this.physics.castRay(
+      x,
+      originY,
+      z,
+      0,
+      -1,
+      0,
+      GROUND_RAY_LENGTH,
+      this.collider, // exclude self collider
+    );
+
+    return hit !== null;
+  }
+
   private updateCrouchState(dt: number): void {
     const targetTransition = this.crouching ? 1 : 0;
     this.crouchTransition += (targetTransition - this.crouchTransition) * Math.min(1, dt * 12);
@@ -151,17 +262,45 @@ export class PlayerController {
     const targetHalfHeight = this.crouching ? CROUCH_HALF_HEIGHT : PLAYER_HALF_HEIGHT;
     if (targetHalfHeight === this.currentHalfHeight) return;
 
-    const bodyPos = this.body.translation();
-    const oldBottom = bodyPos.y - (this.currentHalfHeight + PLAYER_RADIUS);
+    // Maintain bottom position while resizing capsule
+    const tx = this.position.x;
+    const ty = this.position.y;
+    const tz = this.position.z;
+    const oldBottom = ty - (this.currentHalfHeight + PLAYER_RADIUS);
+
     this.currentHalfHeight = targetHalfHeight;
+
+    // Recreate collider (same body) with collision groups preserved
+    const collisionGroups = createCollisionFilter(GROUP_PLAYER, GROUP_WORLD | GROUP_ENEMY);
+
     this.physics.world.removeCollider(this.collider, true);
-    const colliderDesc = this.physics.rapier.ColliderDesc.capsule(
-      this.currentHalfHeight,
-      PLAYER_RADIUS,
-    );
-    this.collider = this.physics.world.createCollider(colliderDesc, this.body);
+    const colliderDesc = this.physics.rapier.ColliderDesc.capsule(this.currentHalfHeight, PLAYER_RADIUS)
+      .setDensity(1.0)
+      .setFriction(0.0)
+      .setRestitution(0.0)
+      .setCollisionGroups(collisionGroups)
+      .setSolverGroups(collisionGroups);
+
+    const body = this.physics.world.getRigidBody(this.bodyHandle);
+    if (!body) return;
+    this.collider = this.physics.world.createCollider(colliderDesc, body);
+
+    // Adjust body Y so the bottom stays fixed
     const newY = oldBottom + this.currentHalfHeight + PLAYER_RADIUS;
-    this.body.setTranslation(new RAPIER.Vector3(bodyPos.x, newY, bodyPos.z), true);
+    body.setTranslation({ x: tx, y: newY, z: tz }, true);
+    this.position.set(tx, newY, tz);
+
+    // If we were grounded, keep vertical stable
+    if (this.grounded && this.verticalVelocity < 0) {
+      this.verticalVelocity = GROUND_STICK_VELOCITY;
+    }
+  }
+
+  private getCurrentMoveSpeed(): number {
+    let speed = MOVE_SPEED;
+    if (this.sprinting) speed *= SPRINT_MULTIPLIER;
+    else if (this.crouching) speed *= CROUCH_SPEED_MULTIPLIER;
+    return speed;
   }
 
   get isCrouching(): boolean {
@@ -169,29 +308,38 @@ export class PlayerController {
   }
 
   getPosition(): { x: number; y: number; z: number } {
-    const t = this.body.translation();
-    return { x: t.x, y: t.y, z: t.z };
+    // Use cached position (avoids Rapier aliasing issues)
+    return { x: this.position.x, y: this.position.y, z: this.position.z };
   }
 
-  /** Teleport player (e.g. level spawn). Resets to standing. */
   setPosition(x: number, y: number, z: number): void {
     this.crouching = false;
     this.crouchTransition = 0;
+
+    // Restore standing collider if needed
     if (this.currentHalfHeight !== PLAYER_HALF_HEIGHT) {
+      const collisionGroups = createCollisionFilter(GROUP_PLAYER, GROUP_WORLD | GROUP_ENEMY);
       this.physics.world.removeCollider(this.collider, true);
-      this.collider = this.physics.world.createCollider(
-        this.physics.rapier.ColliderDesc.capsule(PLAYER_HALF_HEIGHT, PLAYER_RADIUS),
-        this.body,
-      );
+      const colliderDesc = this.physics.rapier.ColliderDesc.capsule(PLAYER_HALF_HEIGHT, PLAYER_RADIUS)
+        .setCollisionGroups(collisionGroups)
+        .setSolverGroups(collisionGroups);
+      const body = this.physics.world.getRigidBody(this.bodyHandle);
+      if (!body) return;
+      this.collider = this.physics.world.createCollider(colliderDesc, body);
       this.currentHalfHeight = PLAYER_HALF_HEIGHT;
     }
+
     const bodyY = y + PLAYER_HALF_HEIGHT + PLAYER_RADIUS;
-    this.body.setTranslation(
-      new RAPIER.Vector3(x, bodyY, z),
-      true,
-    );
-    const eyeY = bodyY - (PLAYER_HALF_HEIGHT * 2 + PLAYER_RADIUS * 2) + EYE_HEIGHT;
-    this.fpsCamera.setPosition(x, eyeY, z);
+    const body = this.physics.world.getRigidBody(this.bodyHandle);
+    if (!body) return;
+    body.setTranslation({ x, y: bodyY, z }, true);
+    body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    this.velocity.set(0, 0, 0);
+
+    this.verticalVelocity = 0;
+    this.grounded = false;
+
+    this.syncFromPhysics();
   }
 
   hasKey(keyId: string): boolean {
@@ -212,7 +360,6 @@ export class PlayerController {
 
   takeDamage(amount: number): void {
     if (this.armor > 0) {
-      // Armor absorbs 60% of damage
       const armorAbsorb = Math.min(this.armor, amount * 0.6);
       this.armor -= armorAbsorb;
       amount -= armorAbsorb;
@@ -228,23 +375,22 @@ export class PlayerController {
     this.armor = Math.min(this.maxArmor, this.armor + amount);
   }
 
-  /**
-   * Mark player as dead (disables movement).
-   */
   setDead(isDead: boolean): void {
     this.dead = isDead;
+    if (isDead) {
+      this.moveInput.set(0, 0, 0);
+      const body = this.physics.world.getRigidBody(this.bodyHandle);
+      if (!body) return;
+      body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      this.velocity.set(0, 0, 0);
+      this.verticalVelocity = 0;
+    }
   }
 
-  /**
-   * Check if player is dead.
-   */
   isDead(): boolean {
     return this.dead;
   }
 
-  /**
-   * Respawn player (reset health, armor, and enable movement).
-   */
   respawn(): void {
     this.dead = false;
     this.health = 100;

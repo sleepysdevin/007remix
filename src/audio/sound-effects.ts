@@ -4,12 +4,99 @@
  */
 
 let audioCtx: AudioContext | null = null;
+let soundPrewarmed = false;
 
 function getAudioCtx(): AudioContext {
   if (!audioCtx) {
     audioCtx = new AudioContext();
   }
   return audioCtx;
+}
+
+/**
+ * Prewarm WebAudio graph to avoid first-shot / first-explosion hitch.
+ * Safe to call repeatedly.
+ */
+export function prewarmSoundEffects(): void {
+  const ctx = getAudioCtx();
+  if (ctx.state === 'suspended') {
+    void ctx.resume().catch(() => {});
+  }
+  if (soundPrewarmed) return;
+  soundPrewarmed = true;
+
+  const now = ctx.currentTime;
+  const noise = makeNoise(ctx, 0.005, 2);
+  const hp = ctx.createBiquadFilter();
+  hp.type = 'highpass';
+  hp.frequency.setValueAtTime(1200, now);
+  const dist = makeDistortion(ctx, 18);
+  const gain = ctx.createGain();
+  gain.gain.setValueAtTime(0.00001, now);
+  noise.connect(hp);
+  hp.connect(dist);
+  dist.connect(gain);
+  gain.connect(ctx.destination);
+  noise.start(now);
+  noise.stop(now + 0.006);
+
+  // Warm oscillator/panner paths used by various effects.
+  const osc = ctx.createOscillator();
+  const og = ctx.createGain();
+  og.gain.setValueAtTime(0.00001, now);
+  const panner = ctx.createPanner();
+  panner.panningModel = 'HRTF';
+  panner.distanceModel = 'inverse';
+  panner.refDistance = 1;
+  panner.maxDistance = 30;
+  osc.connect(og);
+  og.connect(panner);
+  panner.connect(ctx.destination);
+  osc.frequency.setValueAtTime(440, now);
+  osc.start(now);
+  osc.stop(now + 0.006);
+
+  // Warm the exact barrel explosion synthesis path once to avoid first-barrel hitch.
+  prewarmBarrelExplosionPath(ctx, now);
+}
+
+function prewarmBarrelExplosionPath(ctx: AudioContext, startTime: number): void {
+  const base = startTime + 0.02;
+
+  const burst = makeNoise(ctx, 0.01, 4);
+  const burstHp = ctx.createBiquadFilter();
+  burstHp.type = 'highpass';
+  burstHp.frequency.setValueAtTime(3000, base);
+  const burstG = ctx.createGain();
+  burstG.gain.setValueAtTime(0.00001, base);
+  burst.connect(burstHp);
+  burstHp.connect(burstG);
+  burstG.connect(ctx.destination);
+  burst.start(base);
+  burst.stop(base + 0.012);
+
+  const boom = makeNoise(ctx, 0.02, 2);
+  const boomLp = ctx.createBiquadFilter();
+  boomLp.type = 'lowpass';
+  boomLp.frequency.setValueAtTime(1500, base);
+  const boomDist = makeDistortion(ctx, 50);
+  const boomG = ctx.createGain();
+  boomG.gain.setValueAtTime(0.00001, base);
+  boom.connect(boomLp);
+  boomLp.connect(boomDist);
+  boomDist.connect(boomG);
+  boomG.connect(ctx.destination);
+  boom.start(base);
+  boom.stop(base + 0.022);
+
+  const bass = ctx.createOscillator();
+  const bassG = ctx.createGain();
+  bass.frequency.setValueAtTime(70, base);
+  bassG.gain.setValueAtTime(0.00001, base);
+  bass.connect(bassG);
+  bassG.connect(ctx.destination);
+  bass.start(base);
+  bass.stop(base + 0.02);
 }
 
 export type WeaponSoundType = 'pistol' | 'rifle' | 'shotgun' | 'sniper';

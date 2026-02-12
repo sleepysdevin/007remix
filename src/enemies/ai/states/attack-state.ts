@@ -1,113 +1,152 @@
 import * as THREE from 'three';
 import type { State } from '../state-machine';
-import type { EnemyBase } from '../../enemy-base';
+import type { EnemyObject } from '../../enemy-manager';
 import type { EnemyManager } from '../../enemy-manager';
 
-const ENGAGE_RANGE = 18;
-const PREFERRED_RANGE = 8;
-const MOVE_SPEED = 2;
+const MIN_CHASE_DISTANCE = 0.35;
 const LOSE_SIGHT_TIMEOUT = 3;
+const SHOT_INTERVAL = 1.6;
 
-/**
- * Attack state: enemy has spotted the player.
- * Faces player, fires at intervals, strafes slightly.
- * If player is lost for a timeout, transitions to 'alert'.
- */
-export function createAttackState(manager: EnemyManager): State<EnemyBase> {
-  let lostSightTimer = 0;
-  let strafeDir = 1;
-  let strafeTimer = 0;
+interface AttackStateData {
+  lostSightTimer: number;
+  timeSeenPlayer: number;
+  nextShotTime: number;
+  fireAnimTimer: number;
+  shotInterval: number;
+  engageDistance: number;
+  lateralMag: number;
+  lateralDir: number;
+  lateralTimer: number;
+}
+
+export function createAttackState(manager: EnemyManager): State<EnemyObject> {
+  const state = new WeakMap<EnemyObject, AttackStateData>();
+
+  const toPlayer = new THREE.Vector3();
+  const moveDir = new THREE.Vector3();
+  const side = new THREE.Vector3();
 
   return {
     name: 'attack',
 
     enter(enemy) {
-      lostSightTimer = 0;
-      strafeDir = Math.random() > 0.5 ? 1 : -1;
-      strafeTimer = 1 + Math.random() * 2;
-      enemy.model.play('shoot');
-      // Alert nearby enemies immediately
+      const now = performance.now() / 1000;
+      state.set(enemy, {
+        lostSightTimer: 0,
+        timeSeenPlayer: 0,
+        nextShotTime: now + (enemy.firstShotDelay ?? 0),
+        fireAnimTimer: 0,
+        shotInterval: SHOT_INTERVAL * (0.75 + Math.random() * 0.5),
+        engageDistance: MIN_CHASE_DISTANCE + Math.random() * 0.35,
+        lateralMag: 0.06 + Math.random() * 0.12,
+        lateralDir: Math.random() < 0.5 ? -1 : 1,
+        lateralTimer: 0.25 + Math.random() * 0.6,
+      });
+      enemy.model.play('alert');
       manager.propagateAlert(enemy);
     },
 
     update(enemy, dt) {
+      const s = state.get(enemy);
+      if (!s) return;
+
+      s.fireAnimTimer = Math.max(0, s.fireAnimTimer - dt);
       const perception = manager.getPerception(enemy);
       const playerPos = manager.getPlayerPosition();
+      const now = performance.now() / 1000;
 
       if (perception?.canSeePlayer) {
-        lostSightTimer = 0;
+        s.lostSightTimer = 0;
+        s.timeSeenPlayer += dt;
+
         enemy.lastKnownPlayerPos = playerPos.clone();
+        enemy.timeSinceSeenPlayer = s.timeSeenPlayer;
 
-        // Face player
+        toPlayer.subVectors(playerPos, enemy.group.position);
+        toPlayer.y = 0;
+
+        const dist = toPlayer.length();
+
+        // face player
         enemy.lookAt(playerPos);
+        const target = new THREE.Vector3(playerPos.x, playerPos.y + 1.2, playerPos.z);
 
-        // Fire at player
-        const now = performance.now() / 1000;
-        if (enemy.canFire(now)) {
-          enemy.lastFireTime = now;
-          manager.enemyFireAtPlayer(enemy);
-        }
-
-        // Movement: try to maintain preferred range + strafe
-        const dist = perception.distanceToPlayer;
-        const pos = enemy.group.position;
-        const toPlayer = new THREE.Vector3()
-          .subVectors(playerPos, pos).normalize();
-
-        // Approach or retreat to preferred range
-        let moveZ = 0;
-        if (dist > PREFERRED_RANGE + 2) {
-          moveZ = 1; // Advance
-        } else if (dist < PREFERRED_RANGE - 2) {
-          moveZ = -0.5; // Back up
-        }
-
-        // Strafe perpendicular to player direction
-        strafeTimer -= dt;
-        if (strafeTimer <= 0) {
-          strafeDir *= -1;
-          strafeTimer = 1 + Math.random() * 2;
-        }
-
-        const right = new THREE.Vector3(-toPlayer.z, 0, toPlayer.x);
-        const repulsion = manager.getRepulsionForce(enemy);
-        pos.x += (toPlayer.x * moveZ + right.x * strafeDir * 0.5 + repulsion.x * 0.8) * MOVE_SPEED * dt;
-        pos.z += (toPlayer.z * moveZ + right.z * strafeDir * 0.5 + repulsion.z * 0.8) * MOVE_SPEED * dt;
-
-        enemy.model.play('walk');  // walk animation when moving toward/around player
-        manager.syncPhysicsBody(enemy);
-      } else {
-        // Lost sight of player
-        lostSightTimer += dt;
-
-        // Keep moving toward last known position
-        if (enemy.lastKnownPlayerPos) {
-          enemy.lookAt(enemy.lastKnownPlayerPos);
-          const pos = enemy.group.position;
-          const dir = new THREE.Vector3()
-            .subVectors(enemy.lastKnownPlayerPos, pos);
-          dir.y = 0;
-          if (dir.length() > 1) {
-            enemy.model.play('walk');  // walk when chasing last known pos
-            dir.normalize();
-            pos.x += dir.x * MOVE_SPEED * dt;
-            pos.z += dir.z * MOVE_SPEED * dt;
-            manager.syncPhysicsBody(enemy);
+        // Shoot using cached perception (LOS already resolved by perception pass).
+        if (now >= s.nextShotTime && s.timeSeenPlayer > 0.4) {
+          if (enemy.canFire()) {
+            manager.enemyFireAtPlayer(enemy);
+            enemy.model.play('shoot', true);
+            (enemy.model as any).triggerMuzzleFlash?.();
+            s.fireAnimTimer = 0.22;
+            enemy.lastFireTime = now;
+            s.nextShotTime = now + (s.shotInterval * (0.85 + Math.random() * 0.35));
           }
         }
 
-        if (lostSightTimer >= LOSE_SIGHT_TIMEOUT) {
-          enemy.stateMachine.transition('alert', enemy);
+        // Direct chase: face and run toward player, then hold near them.
+        const chaseSpeed = enemy.moveSpeed * 1.2;
+        if (dist > s.engageDistance) {
+          s.lateralTimer -= dt;
+          if (s.lateralTimer <= 0) {
+            s.lateralTimer = 0.2 + Math.random() * 0.7;
+            s.lateralDir = Math.random() < 0.5 ? -1 : 1;
+            s.lateralMag = 0.05 + Math.random() * 0.15;
+          }
+
+          // Micro-weave to avoid synchronized movement while still advancing.
+          side.set(-toPlayer.z, 0, toPlayer.x).normalize().multiplyScalar(s.lateralDir * s.lateralMag);
+          moveDir.copy(toPlayer).normalize().add(side).normalize();
+
+          if (s.fireAnimTimer <= 0) enemy.model.play('walk');
+          enemy.move(moveDir, chaseSpeed, dt);
+        } else {
+          if (s.fireAnimTimer <= 0) enemy.model.play('alert');
+          enemy.stop();
         }
+
+        (enemy.model as any).setGunAim?.(target);
+
+        return;
       }
 
-      // If hearing new gunshots, update last known pos
+      // lost sight
+      s.lostSightTimer += dt;
+
+      // go to last known
+      if (enemy.lastKnownPlayerPos) {
+        (enemy.model as any).clearGunAim?.();
+        enemy.lookAt(enemy.lastKnownPlayerPos);
+
+        toPlayer.subVectors(enemy.lastKnownPlayerPos, enemy.group.position);
+        toPlayer.y = 0;
+
+        if (toPlayer.length() > 0.6) {
+          enemy.model.play('walk');
+          enemy.move(toPlayer, enemy.moveSpeed, dt);
+        } else {
+          enemy.model.play('alert');
+          enemy.stop();
+          enemy.rotate(dt * 0.8);
+        }
+      } else {
+        (enemy.model as any).clearGunAim?.();
+        enemy.stop();
+      }
+
+      if (s.lostSightTimer >= LOSE_SIGHT_TIMEOUT) {
+        enemy.stateMachine.transition('alert', enemy);
+      }
+
       if (perception?.canHearPlayer) {
         enemy.lastKnownPlayerPos = playerPos.clone();
-        lostSightTimer = 0;
+        s.lostSightTimer = 0;
       }
     },
 
-    exit() {},
+    exit(enemy) {
+      (enemy.model as any).clearGunAim?.();
+      state.delete(enemy);
+      enemy.stop();
+    },
   };
 }

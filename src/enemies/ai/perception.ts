@@ -1,11 +1,12 @@
 import * as THREE from 'three';
+import type * as RAPIER from '@dimforge/rapier3d-compat';
 import { PhysicsWorld } from '../../core/physics-world';
-import type { EnemyBase } from '../enemy-base';
+import type { EnemyObject } from '../enemy-manager';
 
-const FOV_HALF_ANGLE = Math.PI / 3; // 60 degrees each side = 120 degree cone
-const SIGHT_RANGE = 20;
-const HEARING_GUNSHOT_RANGE = 25;
-const HEARING_FOOTSTEP_RANGE = 5;
+const FOV_HALF_ANGLE = Math.PI / 6; // 60° total
+const SIGHT_RANGE = 8;
+const HEARING_GUNSHOT_RANGE = 10;
+const HEARING_FOOTSTEP_RANGE = 2;
 
 export interface PerceptionResult {
   canSeePlayer: boolean;
@@ -14,14 +15,32 @@ export interface PerceptionResult {
   directionToPlayer: THREE.Vector3;
 }
 
-/**
- * Checks whether an enemy can see or hear the player.
- * Uses Rapier raycasting for line-of-sight and distance for hearing.
- */
+export function hasClearLineOfSight(
+  physics: PhysicsWorld,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  ignoreCollider?: RAPIER.Collider
+): boolean {
+  const direction = new THREE.Vector3().subVectors(to, from);
+  const distance = direction.length();
+  if (distance <= 0.001) return true;
+  direction.normalize();
+
+  const hit = physics.castRay(
+    from.x, from.y, from.z,
+    direction.x, direction.y, direction.z,
+    distance + 0.25,
+    ignoreCollider
+  );
+
+  if (!hit) return true;
+  return hit.toi >= distance - 0.25;
+}
+
 export function perceivePlayer(
-  enemy: EnemyBase,
+  enemy: EnemyObject,
   playerPos: THREE.Vector3,
-  playerCollider: unknown,
+  playerCollider: RAPIER.Collider,
   physics: PhysicsWorld,
   playerIsMoving: boolean,
   playerFiredRecently: boolean,
@@ -29,44 +48,33 @@ export function perceivePlayer(
   const enemyPos = enemy.getHeadPosition();
   const toPlayer = new THREE.Vector3().subVectors(playerPos, enemyPos);
   const distance = toPlayer.length();
-  const directionToPlayer = toPlayer.clone().normalize();
+  const directionToPlayer = distance > 0.001 ? toPlayer.clone().normalize() : new THREE.Vector3(0, 0, 1);
 
   let canSeePlayer = false;
   let canHearPlayer = false;
 
-  // --- Line of sight ---
   if (distance <= SIGHT_RANGE) {
-    // Check if player is within FOV cone
     const enemyForward = enemy.getForwardDirection();
     const angle = enemyForward.angleTo(directionToPlayer);
 
     if (angle <= FOV_HALF_ANGLE) {
-      // Raycast to check for walls between enemy and player
-      const hit = physics.castRay(
-        enemyPos.x, enemyPos.y, enemyPos.z,
-        directionToPlayer.x, directionToPlayer.y, directionToPlayer.z,
-        distance + 0.5,
+      canSeePlayer = hasClearLineOfSight(
+        physics,
+        enemyPos,
+        playerPos,
+        enemy.collider
       );
-
-      if (hit) {
-        // If the ray traveled close to the player distance, nothing is blocking
-        const hitDist = hit.toi;
-        if (hitDist >= distance - 0.5) {
-          canSeePlayer = true;
-        }
-      } else {
-        // No hit means nothing in the way (unlikely in enclosed space)
-        canSeePlayer = true;
-      }
     }
   }
 
-  // --- Hearing ---
   if (playerFiredRecently && distance <= HEARING_GUNSHOT_RANGE) {
     canHearPlayer = true;
   } else if (playerIsMoving && distance <= HEARING_FOOTSTEP_RANGE) {
     canHearPlayer = true;
   }
+
+  // Gameplay rule: enemies should keep pursuing the player continuously.
+  if (!canHearPlayer) canHearPlayer = true;
 
   return {
     canSeePlayer,
