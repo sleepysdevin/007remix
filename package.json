@@ -8,6 +8,8 @@
     "build": "npm run build:client && npm run build:server",
     "build:client": "vite build",
     "build:server": "tsc -p server/tsconfig.json",
+    "build:baker": "vite build -c vite.baker.config.ts",
+    "bake-sprites": "npm run build:baker && tsx scripts/bake-sprites.ts",
     "preview": "vite preview",
     "server": "tsx server/server.ts",
     "start": "node server-production.js",
@@ -16,6 +18,7 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.14.0",
+    "@pixiv/three-vrm": "^3.4.5",
     "express": "^4.21.2",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
@@ -24,6 +27,7 @@
   "devDependencies": {
     "@types/node": "^20.19.33",
     "@types/three": "^0.172.0",
+    "puppeteer": "^24.37.2",
     "ts-node": "^10.9.2",
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",

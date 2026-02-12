@@ -887,3 +887,343 @@ export function doorFrameTexture(): THREE.CanvasTexture {
     addNoise(ctx, W, H, 10);
   });
 }
+
+// ─── Blood Splatter Sprites (hit effect decals — Fallout/retro FPS style) ───
+
+function getOrCreateDecal(key: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+  const cached = cache.get(key);
+  if (cached) return cached;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, width, height);
+  draw(ctx);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  cache.set(key, tex);
+  return tex;
+}
+
+/** Seeded random for consistent variants */
+function seededRandom(seed: number): number {
+  const x = Math.sin(seed) * 10000;
+  return x - Math.floor(x);
+}
+
+/** Enhanced blood splatter with multiple pattern types and higher detail */
+function drawBloodSplatter(ctx: CanvasRenderingContext2D, w: number, h: number, variant: number): void {
+  const cx = w / 2;
+  const cy = h / 2;
+  const seed = variant * 7919;
+
+  // Determine pattern type based on variant
+  const patternType = variant % 4;
+
+  if (patternType === 0) {
+    // IMPACT CRATER — dense center with explosive radiating droplets
+    drawImpactCrater(ctx, w, h, cx, cy, seed);
+  } else if (patternType === 1) {
+    // ARTERIAL SPRAY — directional fan pattern (realistic wound spray)
+    drawArterialSpray(ctx, w, h, cx, cy, seed);
+  } else if (patternType === 2) {
+    // BULLET EXIT — explosive radial burst with heavy spatter
+    drawBulletExit(ctx, w, h, cx, cy, seed);
+  } else {
+    // CLASSIC SPLAT — elliptical with drips (original enhanced)
+    drawClassicSplat(ctx, w, h, cx, cy, seed, variant);
+  }
+
+  // Add fine mist particles to all patterns for realism
+  addMistParticles(ctx, w, h, cx, cy, seed, 8 + (variant % 5));
+}
+
+/** Impact crater pattern — dense center, explosive radiating droplets */
+function drawImpactCrater(ctx: CanvasRenderingContext2D, w: number, h: number, cx: number, cy: number, seed: number): void {
+  const mainR = w * 0.22;
+
+  // Dense dark core (impact site)
+  ctx.fillStyle = 'rgba(35, 5, 4, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Outer crust
+  ctx.fillStyle = 'rgba(65, 12, 10, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.85, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mid blood
+  ctx.fillStyle = 'rgba(120, 25, 22, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright wet center
+  ctx.fillStyle = 'rgba(200, 42, 38, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Radiating explosive droplets (16-20 droplets)
+  const dropletCount = 16 + Math.floor(seededRandom(seed) * 5);
+  for (let i = 0; i < dropletCount; i++) {
+    const angle = seededRandom(seed + i * 2.7) * Math.PI * 2;
+    const dist = mainR * (1.2 + seededRandom(seed + i * 1.3) * 0.8);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const dropR = w * (0.015 + seededRandom(seed + i * 3.1) * 0.025);
+    const opacity = 0.8 - (dist / (mainR * 2)) * 0.4;
+
+    ctx.fillStyle = `rgba(95, 20, 17, ${opacity})`;
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, dropR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Splatter streaks radiating outward
+  const streakCount = 8 + Math.floor(seededRandom(seed * 1.1) * 4);
+  for (let i = 0; i < streakCount; i++) {
+    const angle = seededRandom(seed * 0.5 + i * 3.2) * Math.PI * 2;
+    const len = mainR * (0.7 + seededRandom(seed + i * 2.5) * 0.9);
+    const sx = Math.cos(angle) * len * 0.6;
+    const sy = Math.sin(angle) * len * 0.6;
+    const sw = w * (0.008 + seededRandom(seed + i) * 0.008);
+    const sh = len * 0.6;
+
+    ctx.save();
+    ctx.translate(cx + sx, cy + sy);
+    ctx.rotate(angle);
+    ctx.fillStyle = `rgba(75, 16, 14, ${0.75 - i * 0.03})`;
+    ctx.fillRect(-sw / 2, -sh / 2, sw, sh);
+    ctx.restore();
+  }
+}
+
+/** Arterial spray pattern — directional fan (realistic wound spray) */
+function drawArterialSpray(ctx: CanvasRenderingContext2D, w: number, h: number, cx: number, cy: number, seed: number): void {
+  const sprayAngle = seededRandom(seed * 0.3) * Math.PI * 2;
+  const fanSpread = Math.PI * 0.4; // 72-degree fan
+  const mainR = w * 0.18;
+
+  // Small impact point
+  ctx.fillStyle = 'rgba(50, 8, 6, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = 'rgba(180, 35, 30, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.25, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Directional spray streaks (elongated droplets in fan pattern)
+  const streakCount = 20 + Math.floor(seededRandom(seed) * 12);
+  for (let i = 0; i < streakCount; i++) {
+    const angleOffset = (seededRandom(seed + i * 1.7) - 0.5) * fanSpread;
+    const angle = sprayAngle + angleOffset;
+    const dist = mainR * (0.8 + seededRandom(seed + i * 2.1) * 1.5);
+    const sx = Math.cos(angle) * dist;
+    const sy = Math.sin(angle) * dist;
+    const sw = w * (0.006 + seededRandom(seed + i * 1.2) * 0.012);
+    const sh = dist * (0.4 + seededRandom(seed + i * 3.3) * 0.3);
+
+    ctx.save();
+    ctx.translate(cx + sx * 0.5, cy + sy * 0.5);
+    ctx.rotate(angle);
+    const opacity = 0.85 - (dist / (mainR * 2.5)) * 0.5;
+    ctx.fillStyle = `rgba(110, 23, 20, ${opacity})`;
+    ctx.fillRect(-sw / 2, -sh / 2, sw, sh);
+    ctx.restore();
+  }
+
+  // Droplets along spray path
+  const dropletCount = 12 + Math.floor(seededRandom(seed * 1.5) * 8);
+  for (let i = 0; i < dropletCount; i++) {
+    const angleOffset = (seededRandom(seed * 0.7 + i * 2.3) - 0.5) * fanSpread;
+    const angle = sprayAngle + angleOffset;
+    const dist = mainR * (0.6 + seededRandom(seed + i * 1.9) * 1.8);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const dropR = w * (0.012 + seededRandom(seed + i * 2.8) * 0.02);
+
+    ctx.fillStyle = `rgba(85, 18, 15, ${0.8})`;
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, dropR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Bullet exit pattern — explosive radial burst with heavy spatter */
+function drawBulletExit(ctx: CanvasRenderingContext2D, w: number, h: number, cx: number, cy: number, seed: number): void {
+  const mainR = w * 0.25;
+
+  // Irregular jagged core (torn flesh)
+  ctx.fillStyle = 'rgba(40, 6, 5, 1)';
+  ctx.beginPath();
+  for (let i = 0; i < 12; i++) {
+    const angle = (i / 12) * Math.PI * 2;
+    const jitter = 0.8 + seededRandom(seed + i * 1.5) * 0.4;
+    const r = mainR * jitter;
+    const x = cx + Math.cos(angle) * r;
+    const y = cy + Math.sin(angle) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Outer spatter ring
+  ctx.fillStyle = 'rgba(75, 15, 12, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.7, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mid blood
+  ctx.fillStyle = 'rgba(130, 27, 23, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright core
+  ctx.fillStyle = 'rgba(210, 48, 42, 1)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, mainR * 0.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Heavy radial spatter (large chunks)
+  const chunkCount = 10 + Math.floor(seededRandom(seed) * 6);
+  for (let i = 0; i < chunkCount; i++) {
+    const angle = seededRandom(seed + i * 2.1) * Math.PI * 2;
+    const dist = mainR * (1.1 + seededRandom(seed + i * 1.4) * 0.7);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const chunkR = w * (0.025 + seededRandom(seed + i * 3.7) * 0.035);
+
+    // Irregular chunk shape
+    ctx.fillStyle = `rgba(70, 14, 11, ${0.9})`;
+    ctx.beginPath();
+    ctx.ellipse(cx + dx, cy + dy, chunkR, chunkR * 1.3, angle, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Long streaks (explosive force)
+  const streakCount = 14 + Math.floor(seededRandom(seed * 1.3) * 8);
+  for (let i = 0; i < streakCount; i++) {
+    const angle = seededRandom(seed * 0.8 + i * 2.9) * Math.PI * 2;
+    const len = mainR * (1.2 + seededRandom(seed + i * 1.8) * 1.3);
+    const sx = Math.cos(angle) * len * 0.7;
+    const sy = Math.sin(angle) * len * 0.7;
+    const sw = w * (0.007 + seededRandom(seed + i * 2.2) * 0.01);
+    const sh = len * 0.8;
+
+    ctx.save();
+    ctx.translate(cx + sx, cy + sy);
+    ctx.rotate(angle);
+    ctx.fillStyle = `rgba(60, 13, 11, ${0.7})`;
+    ctx.fillRect(-sw / 2, -sh / 2, sw, sh);
+    ctx.restore();
+  }
+}
+
+/** Classic splat pattern — elliptical with drips (enhanced) */
+function drawClassicSplat(ctx: CanvasRenderingContext2D, w: number, h: number, cx: number, cy: number, seed: number, variant: number): void {
+  const mainRx = w * (0.2 + (variant % 4) * 0.04);
+  const mainRy = h * (0.18 + (variant % 3) * 0.05);
+  const tilt = seededRandom(seed * 0.5) * Math.PI * 0.5;
+
+  // Dark outer edge
+  ctx.fillStyle = 'rgba(45, 7, 6, 1)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, mainRx * 1.2, mainRy * 1.25, tilt, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Dried crust
+  ctx.fillStyle = 'rgba(80, 16, 14, 1)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, mainRx * 1.0, mainRy * 1.05, tilt, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Mid blood
+  ctx.fillStyle = 'rgba(135, 28, 24, 1)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, mainRx * 0.68, mainRy * 0.72, tilt, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright wet center
+  ctx.fillStyle = 'rgba(205, 44, 39, 1)';
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, mainRx * 0.38, mainRy * 0.42, tilt, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Drip trails (gravity pulls downward)
+  const dripCount = 3 + Math.floor(seededRandom(seed) * 4);
+  for (let i = 0; i < dripCount; i++) {
+    const angleBase = Math.PI * 0.5; // Downward
+    const angle = angleBase + (seededRandom(seed + i * 1.7) - 0.5) * 0.6;
+    const dist = mainRy * (0.5 + seededRandom(seed + i * 2.3) * 0.9);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const dripW = w * (0.015 + seededRandom(seed + i * 3.1) * 0.015);
+    const dripH = dist * (0.6 + seededRandom(seed + i * 1.9) * 0.5);
+
+    ctx.save();
+    ctx.translate(cx + dx, cy + dy);
+    ctx.rotate(angle);
+    ctx.fillStyle = `rgba(90, 19, 16, ${0.85 - i * 0.08})`;
+    ctx.fillRect(-dripW / 2, -dripH / 2, dripW, dripH);
+    ctx.restore();
+  }
+
+  // Speckles around main splat
+  const speckCount = 6 + Math.floor(seededRandom(seed * 1.2) * 6);
+  for (let i = 0; i < speckCount; i++) {
+    const angle = seededRandom(seed + i * 2.5) * Math.PI * 2;
+    const dist = mainRx * (0.8 + seededRandom(seed + i * 1.6) * 0.7);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const r = w * (0.012 + seededRandom(seed + i * 3.4) * 0.015);
+
+    ctx.fillStyle = `rgba(65, 13, 11, ${0.75})`;
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Fine mist particles — tiny dots scattered around for realism */
+function addMistParticles(ctx: CanvasRenderingContext2D, w: number, h: number, cx: number, cy: number, seed: number, count: number): void {
+  for (let i = 0; i < count; i++) {
+    const angle = seededRandom(seed + i * 4.7) * Math.PI * 2;
+    const dist = w * (0.2 + seededRandom(seed + i * 3.9) * 0.35);
+    const dx = Math.cos(angle) * dist;
+    const dy = Math.sin(angle) * dist;
+    const r = w * (0.004 + seededRandom(seed + i * 5.1) * 0.006);
+    const opacity = 0.4 + seededRandom(seed + i * 2.8) * 0.3;
+
+    ctx.fillStyle = `rgba(60, 12, 10, ${opacity})`;
+    ctx.beginPath();
+    ctx.arc(cx + dx, cy + dy, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Blood splatter texture for hit decals/particles. variant 0–11 for variety. 256px for maximum detail. */
+export function bloodSplatterTexture(variant: number = 0): THREE.CanvasTexture {
+  const v = Math.max(0, Math.min(11, Math.floor(variant)));
+  return getOrCreateDecal(`blood-splatter-256-${v}`, 256, 256, (ctx) => drawBloodSplatter(ctx, 256, 256, v));
+}
+
+/** All blood splatter variants (for random selection). */
+export function bloodSplatterTextures(): THREE.CanvasTexture[] {
+  return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11].map((i) => bloodSplatterTexture(i));
+}

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { buildPlayerModel, animatePlayerMovement, playFireAnimation, updateAimingPose, setPlayerWeapon } from './player-model';
+import { buildPlayerModel, buildPlayerModelFromCharacter, animatePlayerMovement, playFireAnimation, updateAimingPose, setPlayerWeapon } from './player-model';
+import { getCachedAvatarModel } from '../core/model-loader';
 import { InterpolationBuffer } from '../network/interpolation-buffer';
 import type { PlayerStateUpdate } from '../network/network-events';
 import type { PhysicsWorld } from '../core/physics-world';
@@ -42,9 +43,13 @@ export class RemotePlayer {
     this.id = id;
     this.username = username;
 
-    // Create player model (scale to human size ~1.7m)
-    this.model = buildPlayerModel(id);
-    this.model.scale.setScalar(1.25);
+    const customChar = getCachedAvatarModel();
+    if (customChar) {
+      this.model = buildPlayerModelFromCharacter(id, customChar);
+    } else {
+      this.model = buildPlayerModel(id);
+      this.model.scale.setScalar(1.25);
+    }
     scene.add(this.model);
 
     // Create blob shadow (scaled to match human-sized player)

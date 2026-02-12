@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { globalLightPool } from '../core/light-pool';
+import type { LoadedCharacter } from '../core/model-loader';
 
 /**
  * Creates a low-poly 3D player character model for remote players.
@@ -221,14 +222,69 @@ export function buildPlayerModel(playerId: string): THREE.Group {
   return root;
 }
 
+const TARGET_PLAYER_HEIGHT = 1.7;
+
+/**
+ * Build a player model from a loaded GLB/VRM.
+ * Used for remote players when customPlayerModelPath is set.
+ */
+export function buildPlayerModelFromCharacter(playerId: string, char: LoadedCharacter): THREE.Group {
+  const root = new THREE.Group();
+  const scene = char.scene.clone(true);
+
+  fixMaterialsForPlayer(scene);
+
+  const box = new THREE.Box3().setFromObject(scene);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const scale = TARGET_PLAYER_HEIGHT / Math.max(size.y, 0.01);
+  scene.scale.setScalar(scale);
+  scene.position.set(-center.x * scale, -box.min.y * scale, -center.z * scale);
+
+  root.add(scene);
+
+  root.userData.playerId = playerId;
+  root.userData.isCustomModel = true;
+  root.userData.weaponAttachPoint = {
+    x: 0, y: 0.9, z: 0.2,
+    rotationX: Math.PI / 2,
+    rotationY: Math.PI,
+    rotationZ: 0,
+    attachToRoot: true,
+  };
+
+  return root;
+}
+
+function fixMaterialsForPlayer(obj: THREE.Object3D): void {
+  obj.traverse((child) => {
+    if (child instanceof THREE.Mesh && child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      for (const mat of mats) {
+        if (mat instanceof THREE.Material) {
+          mat.side = THREE.DoubleSide;
+          mat.depthWrite = true;
+        }
+      }
+    }
+  });
+}
+
 /**
  * Attach a weapon mesh to the player model.
  * Uses the actual weapon meshes from WeaponViewModel.
  * Weapon is attached to the left hand so it moves naturally with arm animations.
+ * For custom models (attachToRoot), attaches to the model root.
  */
 export function setPlayerWeapon(model: THREE.Group, weaponMesh: THREE.Group): void {
-  const hips = model.children[0];
-  if (!hips) return;
+  const attachPoint = model.userData.weaponAttachPoint as {
+    x: number; y: number; z: number;
+    rotationX: number; rotationY: number; rotationZ: number;
+    attachToLeftHand?: boolean;
+    attachToRoot?: boolean;
+  } | undefined;
+
+  if (!attachPoint || !weaponMesh) return;
 
   // Remove old weapon if exists
   const oldWeapon = model.userData.weapon as THREE.Group | undefined;
@@ -237,22 +293,20 @@ export function setPlayerWeapon(model: THREE.Group, weaponMesh: THREE.Group): vo
     if (parent) parent.remove(oldWeapon);
   }
 
-  const attachPoint = model.userData.weaponAttachPoint as {
-    x: number; y: number; z: number;
-    rotationX: number; rotationY: number; rotationZ: number;
-    attachToLeftHand?: boolean;
-  } | undefined;
-
-  if (!attachPoint || !weaponMesh) return;
-
-  // Attach to left hand (moves with arm) or hips (legacy)
-  const leftArm = hips.children[5] as THREE.Group;
-  const leftHand = leftArm?.children[1] as THREE.Group;
-  const attachParent = attachPoint.attachToLeftHand && leftHand ? leftHand : hips;
+  let attachParent: THREE.Object3D;
+  if (attachPoint.attachToRoot) {
+    attachParent = model;
+  } else {
+    const hips = model.children[0];
+    if (!hips) return;
+    const leftArm = hips.children[5] as THREE.Group;
+    const leftHand = leftArm?.children[1] as THREE.Group;
+    attachParent = attachPoint.attachToLeftHand && leftHand ? leftHand : hips;
+  }
 
   weaponMesh.position.set(attachPoint.x, attachPoint.y, attachPoint.z);
   weaponMesh.rotation.set(attachPoint.rotationX, attachPoint.rotationY, attachPoint.rotationZ);
-  weaponMesh.scale.setScalar(0.65); // Scale down for third-person (slightly smaller for hand fit)
+  weaponMesh.scale.setScalar(0.65);
 
   weaponMesh.traverse((child) => {
     child.layers.set(0);
@@ -265,8 +319,11 @@ export function setPlayerWeapon(model: THREE.Group, weaponMesh: THREE.Group): vo
 /**
  * Animate player movement with bob, arm swing, and realistic leg walking animation with knee bending.
  * Call this each frame with the player's movement state.
+ * Custom models (GLB/VRM) use minimal animation for now.
  */
 export function animatePlayerMovement(model: THREE.Group, time: number, isMoving: boolean): void {
+  if (model.userData.isCustomModel) return;
+
   const hips = model.children[0];
   if (!hips) return;
 
@@ -365,11 +422,13 @@ export function playFireAnimation(model: THREE.Group): void {
  * Call this each frame - arms will raise for 0.5s after firing.
  */
 export function updateAimingPose(model: THREE.Group): void {
+  if (model.userData.isCustomModel) return;
+
   const hips = model.children[0];
   if (!hips) return;
 
-  const leftArm = hips.children[4];
-  const rightArm = hips.children[5];
+  const leftArm = hips.children[5];
+  const rightArm = hips.children[6];
 
   // Check if player fired recently (within last 500ms)
   const lastFireTime = model.userData.lastFireTime as number | undefined;

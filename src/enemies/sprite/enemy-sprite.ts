@@ -1,11 +1,21 @@
 import * as THREE from 'three';
-import { generateGuardSpriteSheet, COLS, ROWS, type GuardVariant, GUARD_VARIANTS } from './guard-sprite-sheet';
+import {
+  generateGuardSpriteSheet,
+  loadSpriteSheetFromImage,
+  COLS,
+  ROWS,
+  type GuardVariant,
+  GUARD_VARIANTS,
+} from './guard-sprite-sheet';
 import { SpriteAnimator, type AnimationName } from './sprite-animator';
+
+export type EnemySpriteSource = GuardVariant | THREE.Texture;
 
 /**
  * A billboarded enemy sprite — replaces the 3D cylinder/sphere/box meshes.
- * Uses a PlaneGeometry with a CanvasTexture sprite atlas.
+ * Uses a PlaneGeometry with a CanvasTexture or image sprite atlas.
  * Y-axis-only billboard so enemies stay upright when the player looks up/down.
+ * Supports procedural (GuardVariant), or pre-loaded texture (from image).
  */
 export class EnemySprite {
   readonly mesh: THREE.Mesh;
@@ -14,11 +24,13 @@ export class EnemySprite {
   readonly shadowMesh: THREE.Mesh; // fake blob shadow at feet
 
   private hitTintTimer = 0;
-  private texture: THREE.CanvasTexture;
+  private texture: THREE.Texture;
 
-  constructor(variant: GuardVariant = GUARD_VARIANTS.guard) {
-    // Get (or generate + cache) the shared sprite sheet
-    const sharedTexture = generateGuardSpriteSheet(variant);
+  constructor(source: EnemySpriteSource = GUARD_VARIANTS.guard) {
+    const sharedTexture =
+      source instanceof THREE.Texture
+        ? source
+        : generateGuardSpriteSheet(source as GuardVariant);
 
     // Clone texture so each enemy has independent UV offsets
     // (shares the same source image on the GPU)
@@ -34,9 +46,12 @@ export class EnemySprite {
       depthWrite: true,
     });
 
-    // Plane sized ~1.0 wide × 1.8 tall, shifted up so bottom = feet
-    const geo = new THREE.PlaneGeometry(1.0, 1.8);
-    geo.translate(0, 0.9, 0);
+    // Plane sized for human scale (~1.7–1.9m); custom baked sprites use larger footprint
+    const isBakedTexture = source instanceof THREE.Texture;
+    const w = isBakedTexture ? 1.15 : 1.0;
+    const h = isBakedTexture ? 2.0 : 1.8;
+    const geo = new THREE.PlaneGeometry(w, h);
+    geo.translate(0, h / 2, 0);
 
     this.mesh = new THREE.Mesh(geo, this.material);
 
@@ -57,11 +72,21 @@ export class EnemySprite {
     this.updateTextureOffset();
   }
 
-  /** Y-axis-only billboard: rotates mesh to face camera horizontally */
-  billboardToCamera(cameraWorldPos: THREE.Vector3, enemyWorldPos: THREE.Vector3): void {
+  /**
+   * Create an EnemySprite from an image URL (e.g. baked sprite sheet PNG).
+   * Use for sprites generated from 3D models.
+   */
+  static async fromImage(url: string): Promise<EnemySprite> {
+    const texture = await loadSpriteSheetFromImage(url);
+    return new EnemySprite(texture);
+  }
+
+  /** Y-axis-only billboard: rotates mesh to face camera horizontally. */
+  billboardToCamera(cameraWorldPos: THREE.Vector3, enemyWorldPos: THREE.Vector3, parentRotationY = 0): void {
     const dx = cameraWorldPos.x - enemyWorldPos.x;
     const dz = cameraWorldPos.z - enemyWorldPos.z;
-    this.mesh.rotation.y = Math.atan2(dx, dz);
+    const angleToCamera = Math.atan2(dx, dz);
+    this.mesh.rotation.y = angleToCamera - parentRotationY;
   }
 
   /** Update animation and hit flash tint */
